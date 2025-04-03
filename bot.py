@@ -1,4 +1,3 @@
-Help me to correct the output:                                                                                                                          
 from telegram import Update
 from telegram.ext import (
     Application,
