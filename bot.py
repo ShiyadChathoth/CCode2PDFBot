@@ -378,58 +378,106 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     
     return RUNNING
 
-def detect_and_format_table(terminal_content):
-    """Detect and format tables in the terminal output."""
+def format_table_with_monospace(terminal_content):
+    """Format tables in the terminal output using monospace HTML."""
     lines = terminal_content.splitlines()
     formatted_lines = []
     in_table = False
+    table_start_line = 0
     table_headers = []
-    column_widths = []
+    table_data = []
     
+    # First pass: identify tables and collect data
     for i, line in enumerate(lines):
-        # Check if this might be a table header line
-        if "PID" in line and "Burst Time" in line and "Turnaround Time" in line and "Waiting Time" in line:
+        # Check for table header line with PID and Time columns
+        if re.search(r'\bPID\b.*\bBurst\s*Time\b.*\bTurnaround\s*Time\b.*\bWaiting\s*Time\b', line, re.IGNORECASE):
             in_table = True
-            # Extract headers and calculate column widths
+            table_start_line = i
+            # Extract headers using regex to handle variable spacing
             headers = re.findall(r'\b(\w+(?:\s+\w+)*)\b', line)
             table_headers = headers
-            
-            # Calculate initial column widths based on header length
-            column_widths = [len(header) + 4 for header in headers]  # Add padding
-            
-            # Format the header line with proper spacing
-            header_line = ""
-            for j, header in enumerate(headers):
-                header_line += header.ljust(column_widths[j])
-            
-            formatted_lines.append(header_line)
+            table_data = []
             continue
         
-        # Check if this is a data row in the table
+        # Check if this is a data row in the table (starts with a number followed by spaces and more numbers)
         if in_table and re.match(r'^\s*\d+\s+\d+', line):
-            # Extract numbers
+            # Extract numbers from the line
             numbers = re.findall(r'\d+', line)
-            
-            if len(numbers) >= len(table_headers):
-                # Update column widths if necessary
-                for j, num in enumerate(numbers[:len(table_headers)]):
-                    if len(num) + 4 > column_widths[j]:
-                        column_widths[j] = len(num) + 4
+            if len(numbers) >= 3:  # At least PID, Burst Time, and one other column
+                table_data.append(numbers)
+            continue
+        
+        # Check if we're exiting the table (empty line or text that doesn't match table format)
+        if in_table and (line.strip() == "" or "Average" in line or not re.match(r'^\s*\d+\s+\d+', line)):
+            # We've reached the end of the table, now format it
+            if table_headers and table_data:
+                # Calculate column widths based on the longest entry in each column
+                col_widths = [len(header) for header in table_headers]
                 
-                # Format the data line with proper spacing
-                data_line = ""
-                for j, num in enumerate(numbers[:len(table_headers)]):
-                    data_line += num.ljust(column_widths[j])
+                # Update column widths based on data
+                for row in table_data:
+                    for j, val in enumerate(row):
+                        if j < len(col_widths) and len(val) > col_widths[j]:
+                            col_widths[j] = len(val)
                 
-                formatted_lines.append(data_line)
+                # Add padding to column widths
+                col_widths = [width + 2 for width in col_widths]
+                
+                # Format the header
+                header_line = ""
+                for j, header in enumerate(table_headers):
+                    if j < len(col_widths):
+                        header_line += header.ljust(col_widths[j])
+                
+                # Replace the original header line
+                formatted_lines.append(header_line)
+                
+                # Format the data rows
+                for row in table_data:
+                    data_line = ""
+                    for j, val in enumerate(row):
+                        if j < len(col_widths):
+                            data_line += val.ljust(col_widths[j])
+                    formatted_lines.append(data_line)
+                
+                # Continue with non-table lines
+                in_table = False
                 continue
+    
+        # For non-table lines or if we're not in a table, keep them as is
+        if not in_table:
+            formatted_lines.append(line)
+    
+    # Handle case where table continues to the end of the content
+    if in_table and table_headers and table_data:
+        # Calculate column widths
+        col_widths = [len(header) for header in table_headers]
         
-        # Check if we're exiting the table
-        if in_table and (line.strip() == "" or "Average" in line):
-            in_table = False
+        # Update column widths based on data
+        for row in table_data:
+            for j, val in enumerate(row):
+                if j < len(col_widths) and len(val) > col_widths[j]:
+                    col_widths[j] = len(val)
         
-        # For non-table lines, keep them as is
-        formatted_lines.append(line)
+        # Add padding to column widths
+        col_widths = [width + 2 for width in col_widths]
+        
+        # Format the header
+        header_line = ""
+        for j, header in enumerate(table_headers):
+            if j < len(col_widths):
+                header_line += header.ljust(col_widths[j])
+        
+        # Replace the original header line
+        formatted_lines.append(header_line)
+        
+        # Format the data rows
+        for row in table_data:
+            data_line = ""
+            for j, val in enumerate(row):
+                if j < len(col_widths):
+                    data_line += val.ljust(col_widths[j])
+            formatted_lines.append(data_line)
     
     return "\n".join(formatted_lines)
 
@@ -458,7 +506,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             terminal_content += entry
         
         # Process the terminal content to properly format tables
-        formatted_terminal_content = detect_and_format_table(terminal_content)
+        formatted_terminal_content = format_table_with_monospace(terminal_content)
         
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
