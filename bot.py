@@ -49,6 +49,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['waiting_for_input'] = False
     context.user_data['execution_log'] = []  # Track full execution flow
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
+    context.user_data['terminal_log'] = []  # Specific log for terminal view
     
     try:
         with open("temp.c", "w") as file:
@@ -97,6 +98,7 @@ async def read_process_output(update: Update, context: CallbackContext):
     errors = context.user_data['errors']
     execution_log = context.user_data['execution_log']
     output_buffer = context.user_data['output_buffer']
+    terminal_log = context.user_data['terminal_log']
     
     # Flag to track if we've seen any output that might indicate input is needed
     output_seen = False
@@ -170,6 +172,13 @@ async def read_process_output(update: Update, context: CallbackContext):
             if stdout_chunk:
                 decoded_chunk = stdout_chunk.decode()
                 output_seen = True
+                
+                # Add to terminal log for clean terminal view
+                terminal_log.append({
+                    'type': 'output',
+                    'content': decoded_chunk,
+                    'timestamp': datetime.datetime.now()
+                })
                 
                 # Append to buffer and process
                 output_buffer += decoded_chunk
@@ -261,6 +270,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
     process = context.user_data.get('process')
     execution_log = context.user_data['execution_log']
+    terminal_log = context.user_data['terminal_log']
 
     if not process or process.returncode is not None:
         await update.message.reply_text("Program is not running anymore.")
@@ -285,6 +295,13 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         'timestamp': datetime.datetime.now()
     })
     
+    # Add to terminal log for clean terminal view
+    terminal_log.append({
+        'type': 'input',
+        'content': user_input + "\n",
+        'timestamp': datetime.datetime.now()
+    })
+    
     # Send input to process
     process.stdin.write((user_input + "\n").encode())
     await process.stdin.drain()
@@ -300,9 +317,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
+        terminal_log = context.user_data['terminal_log']
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
+        terminal_log.sort(key=lambda x: x['timestamp'])
         
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
@@ -335,6 +354,24 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
             
+            <h2>Terminal View</h2>
+            <div class="terminal">
+        """
+        
+        # Create a clean terminal view that focuses on program prompts and user inputs
+        terminal_content = ""
+        for entry in terminal_log:
+            entry_type = entry['type']
+            content = entry['content']
+            
+            # Add content directly to maintain exact terminal appearance
+            terminal_content += html.escape(content)
+        
+        html_content += terminal_content
+        
+        html_content += """
+            </div>
+            
             <h2>Execution Flow</h2>
             <div class="execution-flow">
         """
@@ -356,34 +393,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 html_content += f'<div class="error"><span class="timestamp">[{timestamp}]</span> <strong>Error:</strong> <pre>{html.escape(message)}</pre></div>\n'
             elif entry_type == 'system':
                 html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(message)}</pre></div>\n'
-        
-        # Add a reconstructed interaction view with terminal-like formatting
-        html_content += """
-            </div>
-            
-            <h2>Terminal View</h2>
-            <div class="terminal">
-"""
-        
-        # Create a clean representation of the program interaction
-        # Group entries by type to reconstruct the terminal view
-        terminal_lines = []
-        
-        for entry in execution_log:
-            entry_type = entry['type']
-            
-            if entry_type in ('output', 'prompt'):
-                # For output and prompts, add them directly to terminal lines
-                # Use raw content if available to preserve formatting
-                raw_content = entry.get('raw', entry.get('message', ''))
-                terminal_lines.append(html.escape(raw_content))
-            elif entry_type == 'input':
-                # For input, add the input followed by a newline
-                terminal_lines.append(html.escape(entry['message'] + "\n"))
-        
-        # Join terminal lines and add to HTML
-        terminal_content = "".join(terminal_lines)
-        html_content += terminal_content
         
         html_content += """
             </div>
