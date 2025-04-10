@@ -51,8 +51,8 @@ def clean_whitespace(code):
         if unicodedata.category(char).startswith('Z') and char != ' ':
             cleaned_code = cleaned_code.replace(char, ' ')
     
-    # Replace tabs with spaces (optional, but helps with consistency)
-    cleaned_code = cleaned_code.replace('\t', '    ')
+    # Preserve tabs for proper indentation
+    # cleaned_code = cleaned_code.replace('\t', '    ')
     
     return cleaned_code
 
@@ -241,10 +241,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                 output_seen = True
                 
                 # Add to terminal log for clean terminal view
-                # Trim any leading whitespace to prevent unwanted indentation
+                # Preserve tabs and other whitespace
                 terminal_log.append({
                     'type': 'output',
-                    'content': decoded_chunk.lstrip(' '),
+                    'content': decoded_chunk,  # Don't strip leading whitespace to preserve tabs
                     'timestamp': datetime.datetime.now()
                 })
                 
@@ -420,7 +420,23 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
                 h2 {{ color: #3498db; margin-top: 20px; }}
                 pre {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }}
-                code {{ font-family: Consolas, Monaco, 'Andale Mono', monospace; }}
+                code {{ 
+                    font-family: Consolas, Monaco, 'Andale Mono', monospace; 
+                    tab-size: 4;
+                    -moz-tab-size: 4;
+                    -o-tab-size: 4;
+                }}
+                .source-code {{ 
+                    page-break-inside: avoid; /* Try to keep source code on one page */
+                    max-height: 800px; /* Limit height to fit on one page */
+                    overflow-y: auto; /* Add scrollbar if needed */
+                    background-color: #f8f9fa; 
+                    padding: 15px; 
+                    border-radius: 5px; 
+                    font-size: 0.9em; /* Slightly smaller font to fit more code */
+                    line-height: 1.4;
+                    white-space: pre;
+                }}
                 .output {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #3498db; margin: 10px 0; white-space: pre-wrap; }}
                 .prompt {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #9b59b6; margin: 10px 0; white-space: pre-wrap; }}
                 .input {{ background-color: #f0f7e6; padding: 10px; border-left: 4px solid #27ae60; margin: 10px 0; white-space: pre-wrap; }}
@@ -439,10 +455,22 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     line-height: 1.5;
                     margin: 0;
                     padding-left: 0;
+                    tab-size: 4;
+                    -moz-tab-size: 4;
+                    -o-tab-size: 4;
                 }}
                 .terminal-line {{
                     margin: 0;
                     padding-left: 10px;  /* Add consistent indentation to each line */
+                    white-space: pre;    /* Preserve all whitespace including tabs */
+                }}
+                @media print {{
+                    .source-code {{ 
+                        page-break-inside: avoid;
+                        max-height: none; /* Remove height limit for printing */
+                    }}
+                    .terminal {{ page-break-before: always; }}
+                    h2 {{ page-break-before: always; }}
                 }}
             </style>
         </head>
@@ -450,7 +478,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <h1>C Program Execution Report</h1>
             
             <h2>Source Code</h2>
-            <pre><code>{html.escape(code)}</code></pre>
+            <pre class="source-code"><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
             <pre class="terminal">"""
@@ -466,7 +494,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             for line in lines:
                 if line.strip():  # Only process non-empty lines
                     # Add a consistent indentation to each line
-                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
+                    # Replace tabs with appropriate number of spaces for display
+                    line_with_tabs = line.replace('\t', '    ')  # Replace tabs with 4 spaces for display
+                    terminal_content += f'<span class="terminal-line">  {html.escape(line_with_tabs)}</span>'
                 else:
                     terminal_content += html.escape(line)
         
@@ -498,9 +528,20 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
         
-        # Generate PDF with wkhtmltopdf
+        # Generate PDF with wkhtmltopdf with specific options for better layout
         pdf_process = subprocess.run(
-            ["wkhtmltopdf", "--enable-local-file-access", "output.html", "output.pdf"],
+            [
+                "wkhtmltopdf",
+                "--enable-local-file-access",
+                "--page-size", "A4",
+                "--margin-top", "10mm",
+                "--margin-bottom", "10mm",
+                "--margin-left", "10mm",
+                "--margin-right", "10mm",
+                "--disable-smart-shrinking",  # Prevents unexpected scaling
+                "output.html",
+                "output.pdf"
+            ],
             capture_output=True,
             text=True
         )
