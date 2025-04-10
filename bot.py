@@ -427,17 +427,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre;
                 }}
                 .terminal {{ 
-                    background-color: #000000; 
-                    color: #000000; /* Black text on black background for monochrome look */
-                    padding: 20px; 
-                    border-radius: 5px; 
                     font-family: 'Courier New', monospace; 
                     white-space: pre; 
                     line-height: 1.5;
                     margin: 0;
-                    tab-size: 8; /* Match terminal tab size */
+                    tab-size: 8;
                     -moz-tab-size: 8;
                     -o-tab-size: 8;
+                    padding: 15px;
+                    background-color: #f8f9fa;
+                    border-radius: 5px;
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
@@ -466,8 +465,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         for entry in terminal_log:
             terminal_content += entry
         
-        # Replace terminal content with exact formatting from the image
-        # This preserves all spacing, tabs, and newlines exactly as they appear in the terminal
+        # Preserve exact spacing and formatting
         html_content += html.escape(terminal_content)
         
         html_content += """</pre>
