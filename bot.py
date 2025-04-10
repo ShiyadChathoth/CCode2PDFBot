@@ -15,6 +15,7 @@ from asyncio.subprocess import PIPE
 import telegram.error
 import html
 import time
+import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -45,7 +46,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['inputs'] = []
     context.user_data['errors'] = []
     context.user_data['waiting_for_input'] = False
-    context.user_data['execution_log'] = []  # New: track full execution flow
+    context.user_data['execution_log'] = []  # Track full execution flow
+    context.user_data['last_prompt'] = None  # Track the last prompt for better sequencing
     
     try:
         with open("temp.c", "w") as file:
@@ -57,7 +59,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             # Add compilation success to execution log
             context.user_data['execution_log'].append({
                 'type': 'system',
-                'message': 'Code compiled successfully!'
+                'message': 'Code compiled successfully!',
+                'timestamp': datetime.datetime.now()
             })
             
             process = await asyncio.create_subprocess_exec(
@@ -77,7 +80,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             # Add compilation error to execution log
             context.user_data['execution_log'].append({
                 'type': 'error',
-                'message': f"Compilation Error:\n{compile_result.stderr}"
+                'message': f"Compilation Error:\n{compile_result.stderr}",
+                'timestamp': datetime.datetime.now()
             })
             
             await update.message.reply_text(f"Compilation Error:\n{compile_result.stderr}")
@@ -119,7 +123,8 @@ async def read_process_output(update: Update, context: CallbackContext):
                     # Only prompt for input if we've seen some output
                     execution_log.append({
                         'type': 'system',
-                        'message': 'Program execution completed.'
+                        'message': 'Program execution completed.',
+                        'timestamp': datetime.datetime.now()
                     })
                     await update.message.reply_text("Program execution completed.")
                     await generate_and_send_pdf(update, context)
@@ -134,7 +139,8 @@ async def read_process_output(update: Update, context: CallbackContext):
                 context.user_data['waiting_for_input'] = True
                 execution_log.append({
                     'type': 'system',
-                    'message': 'Program appears to be waiting for input. Please provide input (or type "done" to finish):'
+                    'message': 'Program appears to be waiting for input. Please provide input (or type "done" to finish):',
+                    'timestamp': datetime.datetime.now()
                 })
                 await update.message.reply_text("Program appears to be waiting for input. Please provide input (or type 'done' to finish):")
             
@@ -145,19 +151,31 @@ async def read_process_output(update: Update, context: CallbackContext):
             stdout_line = await stdout_task
             if stdout_line:
                 decoded_line = stdout_line.decode().strip()
+                
+                # Store the raw output
                 output.append(decoded_line)
                 output_seen = True
                 
-                # Add to execution log
-                execution_log.append({
-                    'type': 'output',
-                    'message': decoded_line
-                })
+                # Check if this is likely a prompt (ends with : or >)
+                is_prompt = decoded_line.rstrip().endswith((':','>','?'))
                 
-                await update.message.reply_text(f"Program output: {decoded_line}")
+                # Add to execution log with appropriate type
+                log_entry = {
+                    'type': 'prompt' if is_prompt else 'output',
+                    'message': decoded_line,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': stdout_line.decode()  # Store raw output with newlines
+                }
                 
-                # Don't automatically prompt for input after every output line
-                # We'll use the timeout mechanism to detect when input might be needed
+                # If it's a prompt, store it for later association with input
+                if is_prompt:
+                    context.user_data['last_prompt'] = log_entry
+                else:
+                    execution_log.append(log_entry)
+                
+                # Display to user with appropriate prefix
+                prefix = "Program prompt:" if is_prompt else "Program output:"
+                await update.message.reply_text(f"{prefix} {decoded_line}")
 
         # Handle stderr (errors)
         if stderr_task in done:
@@ -169,7 +187,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                 # Add to execution log
                 execution_log.append({
                     'type': 'error',
-                    'message': decoded_line
+                    'message': decoded_line,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': stderr_line.decode()  # Store raw output with newlines
                 })
                 
                 await update.message.reply_text(f"Error: {decoded_line}")
@@ -182,7 +202,8 @@ async def read_process_output(update: Update, context: CallbackContext):
         if process.returncode is not None:
             execution_log.append({
                 'type': 'system',
-                'message': 'Program execution completed.'
+                'message': 'Program execution completed.',
+                'timestamp': datetime.datetime.now()
             })
             await update.message.reply_text("Program execution completed.")
             await generate_and_send_pdf(update, context)
@@ -200,7 +221,8 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     if user_input.lower() == 'done':
         execution_log.append({
             'type': 'system',
-            'message': 'User terminated the program.'
+            'message': 'User terminated the program.',
+            'timestamp': datetime.datetime.now()
         })
         await process.stdin.drain()
         process.stdin.close()
@@ -208,10 +230,18 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await generate_and_send_pdf(update, context)
         return ConversationHandler.END
 
+    # If there was a last prompt, add it to the execution log now
+    # This ensures proper sequencing (prompt -> input -> output)
+    last_prompt = context.user_data.get('last_prompt')
+    if last_prompt and last_prompt not in execution_log:
+        execution_log.append(last_prompt)
+        context.user_data['last_prompt'] = None
+    
     # Add user input to execution log
     execution_log.append({
         'type': 'input',
-        'message': user_input
+        'message': user_input,
+        'timestamp': datetime.datetime.now()
     })
     
     # Send input to process
@@ -230,6 +260,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         
+        # Sort execution log by timestamp to ensure correct order
+        execution_log.sort(key=lambda x: x['timestamp'])
+        
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
         <!DOCTYPE html>
@@ -243,12 +276,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 h2 {{ color: #3498db; margin-top: 20px; }}
                 pre {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }}
                 code {{ font-family: Consolas, Monaco, 'Andale Mono', monospace; }}
-                .output {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #3498db; margin: 10px 0; }}
-                .input {{ background-color: #f0f7e6; padding: 10px; border-left: 4px solid #27ae60; margin: 10px 0; }}
-                .error {{ background-color: #fae5e5; padding: 10px; border-left: 4px solid #e74c3c; margin: 10px 0; }}
-                .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; }}
+                .output {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #3498db; margin: 10px 0; white-space: pre-wrap; }}
+                .prompt {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #9b59b6; margin: 10px 0; white-space: pre-wrap; }}
+                .input {{ background-color: #f0f7e6; padding: 10px; border-left: 4px solid #27ae60; margin: 10px 0; white-space: pre-wrap; }}
+                .error {{ background-color: #fae5e5; padding: 10px; border-left: 4px solid #e74c3c; margin: 10px 0; white-space: pre-wrap; }}
+                .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .execution-flow {{ margin-top: 20px; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
+                .interaction {{ border: 1px solid #eee; margin-bottom: 15px; padding: 10px; border-radius: 5px; }}
             </style>
         </head>
         <body>
@@ -261,22 +296,45 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <div class="execution-flow">
         """
         
-        # Add execution log with timestamps
+        # Add execution log with precise timestamps and preserve newlines
         for i, entry in enumerate(execution_log):
             entry_type = entry['type']
-            message = entry['message']
-            timestamp = time.strftime('%H:%M:%S', time.localtime())
+            message = entry.get('raw', entry['message'])  # Use raw message if available to preserve newlines
+            timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
             
             if entry_type == 'output':
-                html_content += f'<div class="output"><span class="timestamp">[{timestamp}]</span> <strong>Program Output:</strong> {html.escape(message)}</div>\n'
+                html_content += f'<div class="output"><span class="timestamp">[{timestamp}]</span> <strong>Program Output:</strong> <pre>{html.escape(message)}</pre></div>\n'
+            elif entry_type == 'prompt':
+                html_content += f'<div class="prompt"><span class="timestamp">[{timestamp}]</span> <strong>Program Prompt:</strong> <pre>{html.escape(message)}</pre></div>\n'
             elif entry_type == 'input':
-                html_content += f'<div class="input"><span class="timestamp">[{timestamp}]</span> <strong>User Input:</strong> {html.escape(message)}</div>\n'
+                html_content += f'<div class="input"><span class="timestamp">[{timestamp}]</span> <strong>User Input:</strong> <pre>{html.escape(message)}</pre></div>\n'
             elif entry_type == 'error':
-                html_content += f'<div class="error"><span class="timestamp">[{timestamp}]</span> <strong>Error:</strong> {html.escape(message)}</div>\n'
+                html_content += f'<div class="error"><span class="timestamp">[{timestamp}]</span> <strong>Error:</strong> <pre>{html.escape(message)}</pre></div>\n'
             elif entry_type == 'system':
-                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> {html.escape(message)}</div>\n'
+                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(message)}</pre></div>\n'
         
+        # Add a reconstructed interaction view
         html_content += """
+            </div>
+            
+            <h2>Reconstructed Program Interaction</h2>
+            <div class="interaction">
+                <pre>
+"""
+        
+        # Create a clean representation of the program interaction
+        interaction_text = ""
+        for entry in execution_log:
+            entry_type = entry['type']
+            message = entry.get('raw', entry['message'])
+            
+            if entry_type in ('output', 'prompt'):
+                interaction_text += message
+            elif entry_type == 'input':
+                interaction_text += message + "\n"
+        
+        html_content += html.escape(interaction_text) + """
+                </pre>
             </div>
         </body>
         </html>
