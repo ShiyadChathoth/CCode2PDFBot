@@ -378,6 +378,61 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     
     return RUNNING
 
+def detect_and_format_table(terminal_content):
+    """Detect and format tables in the terminal output."""
+    lines = terminal_content.splitlines()
+    formatted_lines = []
+    in_table = False
+    table_headers = []
+    column_widths = []
+    
+    for i, line in enumerate(lines):
+        # Check if this might be a table header line
+        if "PID" in line and "Burst Time" in line and "Turnaround Time" in line and "Waiting Time" in line:
+            in_table = True
+            # Extract headers and calculate column widths
+            headers = re.findall(r'\b(\w+(?:\s+\w+)*)\b', line)
+            table_headers = headers
+            
+            # Calculate initial column widths based on header length
+            column_widths = [len(header) + 4 for header in headers]  # Add padding
+            
+            # Format the header line with proper spacing
+            header_line = ""
+            for j, header in enumerate(headers):
+                header_line += header.ljust(column_widths[j])
+            
+            formatted_lines.append(header_line)
+            continue
+        
+        # Check if this is a data row in the table
+        if in_table and re.match(r'^\s*\d+\s+\d+', line):
+            # Extract numbers
+            numbers = re.findall(r'\d+', line)
+            
+            if len(numbers) >= len(table_headers):
+                # Update column widths if necessary
+                for j, num in enumerate(numbers[:len(table_headers)]):
+                    if len(num) + 4 > column_widths[j]:
+                        column_widths[j] = len(num) + 4
+                
+                # Format the data line with proper spacing
+                data_line = ""
+                for j, num in enumerate(numbers[:len(table_headers)]):
+                    data_line += num.ljust(column_widths[j])
+                
+                formatted_lines.append(data_line)
+                continue
+        
+        # Check if we're exiting the table
+        if in_table and (line.strip() == "" or "Average" in line):
+            in_table = False
+        
+        # For non-table lines, keep them as is
+        formatted_lines.append(line)
+    
+    return "\n".join(formatted_lines)
+
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
@@ -396,6 +451,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 entry['message'] == 'Program execution completed.'
             )
         ]
+        
+        # Combine all terminal log entries to create exact terminal output
+        terminal_content = ""
+        for entry in terminal_log:
+            terminal_content += entry
+        
+        # Process the terminal content to properly format tables
+        formatted_terminal_content = detect_and_format_table(terminal_content)
         
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
@@ -458,17 +521,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <pre class="source-code"><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
-            <pre class="terminal">"""
-        
-        # Combine all terminal log entries to create exact terminal output
-        terminal_content = ""
-        for entry in terminal_log:
-            terminal_content += entry
-        
-        # Preserve exact spacing and formatting
-        html_content += html.escape(terminal_content)
-        
-        html_content += """</pre>
+            <pre class="terminal">{html.escape(formatted_terminal_content)}</pre>
+            
         """
         
         # Add only the system messages for compilation success and program completion
