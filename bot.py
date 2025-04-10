@@ -51,9 +51,6 @@ def clean_whitespace(code):
         if unicodedata.category(char).startswith('Z') and char != ' ':
             cleaned_code = cleaned_code.replace(char, ' ')
     
-    # Preserve tabs for proper indentation
-    # cleaned_code = cleaned_code.replace('\t', '    ')
-    
     return cleaned_code
 
 async def handle_code(update: Update, context: CallbackContext) -> int:
@@ -75,9 +72,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['waiting_for_input'] = False
     context.user_data['execution_log'] = []  # Track full execution flow
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
-    context.user_data['terminal_log'] = []  # Specific log for terminal view
-    
-    # No longer adding command prompts to terminal log
+    context.user_data['terminal_log'] = []  # Raw terminal output for exact formatting
     
     try:
         with open("temp.c", "w") as file:
@@ -210,8 +205,6 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     
-                    # No longer adding final command prompt
-                    
                     await update.message.reply_text("Program execution completed.")
                     await generate_and_send_pdf(update, context)
                     break
@@ -245,13 +238,8 @@ async def read_process_output(update: Update, context: CallbackContext):
                 decoded_chunk = stdout_chunk.decode()
                 output_seen = True
                 
-                # Add to terminal log for clean terminal view
-                # Preserve tabs and other whitespace
-                terminal_log.append({
-                    'type': 'output',
-                    'content': decoded_chunk,  # Don't strip leading whitespace to preserve tabs
-                    'timestamp': datetime.datetime.now()
-                })
+                # Store raw output for exact terminal formatting
+                terminal_log.append(decoded_chunk)
                 
                 # Append to buffer and process
                 output_buffer += decoded_chunk
@@ -296,8 +284,6 @@ async def read_process_output(update: Update, context: CallbackContext):
                 'message': 'Program execution completed.',
                 'timestamp': datetime.datetime.now()
             })
-            
-            # No longer adding final command prompt
             
             await update.message.reply_text("Program execution completed.")
             await generate_and_send_pdf(update, context)
@@ -378,12 +364,8 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         'timestamp': datetime.datetime.now()
     })
     
-    # Add to terminal log for clean terminal view
-    terminal_log.append({
-        'type': 'input',
-        'content': user_input + "\n",
-        'timestamp': datetime.datetime.now()
-    })
+    # Add user input to terminal log with newline
+    terminal_log.append(user_input + "\n")
     
     # Send input to process
     process.stdin.write((user_input + "\n").encode())
@@ -404,7 +386,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
-        terminal_log.sort(key=lambda x: x['timestamp'])
         
         # Filter execution log to keep only compilation success and program completion messages
         filtered_execution_log = [
@@ -447,40 +428,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 .terminal {{ 
                     background-color: #000000; 
-                    color: #00ff00; 
+                    color: #000000; /* Black text on black background for monochrome look */
                     padding: 20px; 
                     border-radius: 5px; 
                     font-family: 'Courier New', monospace; 
                     white-space: pre; 
                     line-height: 1.5;
                     margin: 0;
-                    tab-size: 4;
-                    -moz-tab-size: 4;
-                    -o-tab-size: 4;
+                    tab-size: 8; /* Match terminal tab size */
+                    -moz-tab-size: 8;
+                    -o-tab-size: 8;
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
-                
-                /* Table formatting for terminal output */
-                .terminal-table {{
-                    font-family: 'Courier New', monospace;
-                    border-spacing: 0;
-                    width: 100%;
-                    color: #00ff00;
-                    margin-top: 10px;
-                    margin-bottom: 10px;
-                    white-space: pre;
-                }}
-                .terminal-row {{
-                    line-height: 1.5;
-                }}
-                .terminal-cell {{
-                    padding-right: 20px;
-                }}
-                .terminal-header {{
-                    padding-bottom: 5px;
-                    text-align: left;
-                }}
                 
                 @media print {{
                     .source-code {{ 
@@ -501,67 +461,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <h2>Terminal View</h2>
             <pre class="terminal">"""
         
-        # Create a clean terminal view that focuses on program prompts and user inputs
+        # Combine all terminal log entries to create exact terminal output
         terminal_content = ""
+        for entry in terminal_log:
+            terminal_content += entry
         
-        # Process terminal log to identify tables and format them properly
-        i = 0
-        while i < len(terminal_log):
-            entry = terminal_log[i]
-            entry_type = entry['type']
-            content = entry['content']
-            
-            # Skip command prompts (type 'prompt')
-            if entry_type == 'prompt':
-                i += 1
-                continue
-                
-            # Check if this might be a table header
-            if "PID" in content and "Burst Time" in content and "Turnaround Time" in content:
-                # This looks like a table header, let's format it as a table
-                table_content = '<table class="terminal-table">\n'
-                
-                # Process header
-                headers = re.findall(r'\b(\w+(?:\s+\w+)*)\b', content)
-                table_content += '<tr class="terminal-row">\n'
-                for header in headers:
-                    table_content += f'  <th class="terminal-header">{html.escape(header)}</th>\n'
-                table_content += '</tr>\n'
-                
-                # Look ahead for table rows
-                j = i + 1
-                while j < len(terminal_log) and terminal_log[j]['type'] == 'output':
-                    row_content = terminal_log[j]['content']
-                    # Check if this is a data row (contains mostly numbers)
-                    if re.match(r'^\s*\d+\s+\d+', row_content):
-                        # Extract numbers with proper spacing
-                        cells = re.findall(r'\s*(\d+)\s*', row_content)
-                        if cells:
-                            table_content += '<tr class="terminal-row">\n'
-                            for cell in cells:
-                                table_content += f'  <td class="terminal-cell">{html.escape(cell)}</td>\n'
-                            table_content += '</tr>\n'
-                        j += 1
-                    else:
-                        break
-                
-                table_content += '</table>\n'
-                terminal_content += table_content
-                i = j  # Skip the rows we've already processed
-            else:
-                # Process the content line by line to preserve formatting
-                lines = content.splitlines(True)  # Keep line endings
-                for line in lines:
-                    if line.strip():  # Only process non-empty lines
-                        # Replace tabs with appropriate number of spaces for display
-                        line_with_tabs = line.replace('\t', '    ')  # Replace tabs with 4 spaces for display
-                        terminal_content += html.escape(line_with_tabs)
-                    else:
-                        terminal_content += html.escape(line)
-                
-                i += 1
-        
-        html_content += terminal_content
+        # Replace terminal content with exact formatting from the image
+        # This preserves all spacing, tabs, and newlines exactly as they appear in the terminal
+        html_content += html.escape(terminal_content)
         
         html_content += """</pre>
         """
