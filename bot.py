@@ -17,6 +17,7 @@ import html
 import time
 import datetime
 import re
+import unicodedata
 
 # Set up logging
 logging.basicConfig(
@@ -40,8 +41,33 @@ async def start(update: Update, context: CallbackContext) -> int:
     )
     return CODE
 
+def clean_whitespace(code):
+    """Clean non-standard whitespace characters from code."""
+    # Replace non-breaking spaces (U+00A0) with regular spaces
+    cleaned_code = code.replace('\u00A0', ' ')
+    
+    # Replace other problematic Unicode whitespace characters
+    for char in code:
+        if unicodedata.category(char).startswith('Z') and char != ' ':
+            cleaned_code = cleaned_code.replace(char, ' ')
+    
+    # Replace tabs with spaces (optional, but helps with consistency)
+    cleaned_code = cleaned_code.replace('\t', '    ')
+    
+    return cleaned_code
+
 async def handle_code(update: Update, context: CallbackContext) -> int:
-    code = update.message.text
+    original_code = update.message.text
+    
+    # Clean whitespace characters that might cause compilation issues
+    code = clean_whitespace(original_code)
+    
+    # Check if code was modified during cleaning
+    if code != original_code:
+        await update.message.reply_text(
+            "⚠️ I detected and fixed non-standard whitespace characters in your code that would cause compilation errors."
+        )
+    
     context.user_data['code'] = code
     context.user_data['output'] = []
     context.user_data['inputs'] = []
@@ -79,6 +105,38 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             asyncio.create_task(read_process_output(update, context))
             return RUNNING
         else:
+            # Check if there are still whitespace errors after cleaning
+            if "stray" in compile_result.stderr and "\\302" in compile_result.stderr:
+                # Try a more aggressive cleaning approach
+                code = re.sub(r'[^\x00-\x7F]+', ' ', code)  # Replace all non-ASCII chars with spaces
+                
+                with open("temp.c", "w") as file:
+                    file.write(code)
+                
+                # Try compiling again
+                compile_result = subprocess.run(["gcc", "temp.c", "-o", "temp"], capture_output=True, text=True)
+                
+                if compile_result.returncode == 0:
+                    context.user_data['execution_log'].append({
+                        'type': 'system',
+                        'message': 'Code compiled successfully after aggressive whitespace cleaning!',
+                        'timestamp': datetime.datetime.now()
+                    })
+                    
+                    process = await asyncio.create_subprocess_exec(
+                        "stdbuf", "-o0", "./temp",
+                        stdin=PIPE,
+                        stdout=PIPE,
+                        stderr=PIPE
+                    )
+                    
+                    context.user_data['process'] = process
+                    await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
+                    
+                    # Start monitoring process output without immediately asking for input
+                    asyncio.create_task(read_process_output(update, context))
+                    return RUNNING
+            
             # Add compilation error to execution log
             context.user_data['execution_log'].append({
                 'type': 'error',
@@ -86,7 +144,16 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                 'timestamp': datetime.datetime.now()
             })
             
-            await update.message.reply_text(f"Compilation Error:\n{compile_result.stderr}")
+            # Provide helpful error message for whitespace issues
+            if "stray" in compile_result.stderr and ("\\302" in compile_result.stderr or "\\240" in compile_result.stderr):
+                await update.message.reply_text(
+                    f"Compilation Error (non-standard whitespace characters):\n{compile_result.stderr}\n\n"
+                    f"Your code contains invisible non-standard whitespace characters that the compiler cannot process. "
+                    f"Try retyping the code in a plain text editor or use a code editor like VS Code."
+                )
+            else:
+                await update.message.reply_text(f"Compilation Error:\n{compile_result.stderr}")
+            
             return ConversationHandler.END
     except Exception as e:
         await update.message.reply_text(f"An error occurred: {str(e)}")
@@ -248,8 +315,15 @@ def process_output_chunk(context, buffer, update):
         if line_stripped:
             output.append(line_stripped)
             
-            # Check if this is likely a prompt (ends with : or >)
-            is_prompt = line_stripped.rstrip().endswith((':','>','?'))
+            # Enhanced prompt detection - check for various patterns
+            # 1. Standard prompt endings
+            # 2. Words like "Enter", "Input", "Type" followed by any text
+            # 3. Phrases asking for input without proper spacing
+            is_prompt = (
+                line_stripped.rstrip().endswith((':','>','?')) or
+                re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
+                "number" in line_stripped.lower()
+            )
             
             # Add to execution log with appropriate type
             log_entry = {
@@ -324,6 +398,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         execution_log.sort(key=lambda x: x['timestamp'])
         terminal_log.sort(key=lambda x: x['timestamp'])
         
+        # Filter execution log to keep only compilation success and program completion messages
+        filtered_execution_log = [
+            entry for entry in execution_log 
+            if entry['type'] == 'system' and (
+                entry['message'] == 'Code compiled successfully!' or 
+                entry['message'] == 'Code compiled successfully after aggressive whitespace cleaning!' or
+                entry['message'] == 'Program execution completed.'
+            )
+        ]
+        
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
         <!DOCTYPE html>
@@ -380,31 +464,24 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         html_content += terminal_content.lstrip()  # Remove any leading whitespace from the entire terminal content
         
         html_content += """</pre>
-            
-            <h2>Execution Flow</h2>
-            <div class="execution-flow">
         """
         
-        # Add execution log with precise timestamps and preserve newlines
-        for i, entry in enumerate(execution_log):
-            entry_type = entry['type']
-            message = entry.get('message', '')
-            raw = entry.get('raw', message)  # Use raw message if available to preserve newlines
-            timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+        # Add only the system messages for compilation success and program completion
+        if filtered_execution_log:
+            html_content += """
+            <h2>System Messages</h2>
+            <div class="execution-flow">
+            """
             
-            if entry_type == 'output':
-                html_content += f'<div class="output"><span class="timestamp">[{timestamp}]</span> <strong>Program Output:</strong> <pre>{html.escape(message)}</pre></div>\n'
-            elif entry_type == 'prompt':
-                html_content += f'<div class="prompt"><span class="timestamp">[{timestamp}]</span> <strong>Program Prompt:</strong> <pre>{html.escape(message)}</pre></div>\n'
-            elif entry_type == 'input':
-                html_content += f'<div class="input"><span class="timestamp">[{timestamp}]</span> <strong>User Input:</strong> <pre>{html.escape(message)}</pre></div>\n'
-            elif entry_type == 'error':
-                html_content += f'<div class="error"><span class="timestamp">[{timestamp}]</span> <strong>Error:</strong> <pre>{html.escape(message)}</pre></div>\n'
-            elif entry_type == 'system':
-                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(message)}</pre></div>\n'
+            for entry in filtered_execution_log:
+                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
+            
+            html_content += """
+            </div>
+            """
         
         html_content += """
-            </div>
         </body>
         </html>
         """
