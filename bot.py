@@ -51,9 +51,6 @@ def clean_whitespace(code):
         if unicodedata.category(char).startswith('Z') and char != ' ':
             cleaned_code = cleaned_code.replace(char, ' ')
     
-    # Preserve tabs for proper indentation
-    # cleaned_code = cleaned_code.replace('\t', '    ')
-    
     return cleaned_code
 
 async def handle_code(update: Update, context: CallbackContext) -> int:
@@ -73,9 +70,9 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['inputs'] = []
     context.user_data['errors'] = []
     context.user_data['waiting_for_input'] = False
-    context.user_data['execution_log'] = []  # Track full execution flow
-    context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
-    context.user_data['terminal_log'] = []  # Specific log for terminal view
+    context.user_data['execution_log'] = []
+    context.user_data['output_buffer'] = ""
+    context.user_data['terminal_log'] = []
     
     try:
         with open("temp.c", "w") as file:
@@ -84,7 +81,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         compile_result = subprocess.run(["gcc", "temp.c", "-o", "temp"], capture_output=True, text=True)
         
         if compile_result.returncode == 0:
-            # Add compilation success to execution log
             context.user_data['execution_log'].append({
                 'type': 'system',
                 'message': 'Code compiled successfully!',
@@ -101,19 +97,15 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             context.user_data['process'] = process
             await update.message.reply_text("Code compiled successfully! Running now...")
             
-            # Start monitoring process output without immediately asking for input
             asyncio.create_task(read_process_output(update, context))
             return RUNNING
         else:
-            # Check if there are still whitespace errors after cleaning
             if "stray" in compile_result.stderr and "\\302" in compile_result.stderr:
-                # Try a more aggressive cleaning approach
-                code = re.sub(r'[^\x00-\x7F]+', ' ', code)  # Replace all non-ASCII chars with spaces
+                code = re.sub(r'[^\x00-\x7F]+', ' ', code)
                 
                 with open("temp.c", "w") as file:
                     file.write(code)
                 
-                # Try compiling again
                 compile_result = subprocess.run(["gcc", "temp.c", "-o", "temp"], capture_output=True, text=True)
                 
                 if compile_result.returncode == 0:
@@ -133,18 +125,15 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                     context.user_data['process'] = process
                     await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
                     
-                    # Start monitoring process output without immediately asking for input
                     asyncio.create_task(read_process_output(update, context))
                     return RUNNING
             
-            # Add compilation error to execution log
             context.user_data['execution_log'].append({
                 'type': 'error',
                 'message': f"Compilation Error:\n{compile_result.stderr}",
                 'timestamp': datetime.datetime.now()
             })
             
-            # Provide helpful error message for whitespace issues
             if "stray" in compile_result.stderr and ("\\302" in compile_result.stderr or "\\240" in compile_result.stderr):
                 await update.message.reply_text(
                     f"Compilation Error (non-standard whitespace characters):\n{compile_result.stderr}\n\n"
@@ -167,41 +156,30 @@ async def read_process_output(update: Update, context: CallbackContext):
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
     
-    # Flag to track if we've seen any output that might indicate input is needed
     output_seen = False
-    
-    # Use a smaller read size to capture output more frequently
     read_size = 1024
     
     while True:
-        # Read stdout and stderr in chunks rather than lines
         stdout_task = asyncio.create_task(process.stdout.read(read_size))
         stderr_task = asyncio.create_task(process.stderr.read(read_size))
         
-        # Wait for either stdout or stderr to have data, or for a short timeout
         done, pending = await asyncio.wait(
             [stdout_task, stderr_task],
             return_when=asyncio.FIRST_COMPLETED,
-            timeout=0.5  # Add timeout to check process status periodically
+            timeout=0.5
         )
 
-        # If no output received, check if process has ended
         if not done:
             for task in pending:
                 task.cancel()
             
-            # Check if process has finished
             if process.returncode is not None:
-                # Process ended without more output
-                # If there's any remaining data in the buffer, process it
                 if output_buffer:
-                    # Process any remaining buffered output
                     process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
                 
                 if output_seen:
-                    # Only send completion message if we've seen some output
                     execution_log.append({
                         'type': 'system',
                         'message': 'Program execution completed.',
@@ -211,13 +189,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                     await generate_and_send_pdf(update, context)
                     break
                 else:
-                    # No output seen, just wait a bit more
                     await asyncio.sleep(0.1)
                     continue
             
-            # If we've seen output but no new output for a while, it might be waiting for input
             if output_seen and not context.user_data.get('waiting_for_input', False):
-                # Process any buffered output before prompting for input
                 if output_buffer:
                     process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
@@ -233,56 +208,45 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             continue
 
-        # Handle stdout (program output)
         if stdout_task in done:
             stdout_chunk = await stdout_task
             if stdout_chunk:
                 decoded_chunk = stdout_chunk.decode()
                 output_seen = True
                 
-                # Add to terminal log for clean terminal view
-                # Preserve tabs and other whitespace
                 terminal_log.append({
                     'type': 'output',
-                    'content': decoded_chunk,  # Don't strip leading whitespace to preserve tabs
+                    'content': decoded_chunk,
                     'timestamp': datetime.datetime.now()
                 })
                 
-                # Append to buffer and process
                 output_buffer += decoded_chunk
                 context.user_data['output_buffer'] = output_buffer
                 
-                # Process the buffer
                 output_buffer = process_output_chunk(context, output_buffer, update)
                 context.user_data['output_buffer'] = output_buffer
 
-        # Handle stderr (errors)
         if stderr_task in done:
             stderr_chunk = await stderr_task
             if stderr_chunk:
                 decoded_chunk = stderr_chunk.decode()
                 
-                # Process error lines
-                for line in decoded_chunk.splitlines(True):  # Keep line endings
+                for line in decoded_chunk.splitlines(True):
                     errors.append(line.strip())
                     
-                    # Add to execution log
                     execution_log.append({
                         'type': 'error',
                         'message': line.strip(),
                         'timestamp': datetime.datetime.now(),
-                        'raw': line  # Store raw output with newlines
+                        'raw': line
                     })
                     
                     await update.message.reply_text(f"Error: {line.strip()}")
 
-        # Cancel pending tasks
         for task in pending:
             task.cancel()
 
-        # Check if process has finished
         if process.returncode is not None:
-            # Process any remaining buffered output
             if output_buffer:
                 process_output_chunk(context, output_buffer, update)
             
@@ -300,42 +264,33 @@ def process_output_chunk(context, buffer, update):
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
     
-    # Split the buffer into lines, preserving the line endings
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
     
-    # If the buffer doesn't end with a newline, keep the last part for next time
     new_buffer = ""
     if lines and not buffer.endswith('\n'):
         new_buffer = lines[-1]
         lines = lines[:-1]
     
-    # Process each complete line
     for line in lines:
         line_stripped = line.strip()
         if line_stripped:
             output.append(line_stripped)
             
-            # Enhanced prompt detection - check for various patterns
-            # 1. Standard prompt endings
-            # 2. Words like "Enter", "Input", "Type" followed by any text
-            # 3. Phrases asking for input without proper spacing
             is_prompt = (
                 line_stripped.rstrip().endswith((':','>','?')) or
                 re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
                 "number" in line_stripped.lower()
             )
             
-            # Add to execution log with appropriate type
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
                 'message': line_stripped,
                 'timestamp': datetime.datetime.now(),
-                'raw': line  # Store raw output with newlines
+                'raw': line
             }
             
             execution_log.append(log_entry)
             
-            # Display to user with appropriate prefix
             prefix = "Program prompt:" if is_prompt else "Program output:"
             asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
     
@@ -363,27 +318,23 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await generate_and_send_pdf(update, context)
         return ConversationHandler.END
     
-    # Add user input to execution log
     execution_log.append({
         'type': 'input',
         'message': user_input,
         'timestamp': datetime.datetime.now()
     })
     
-    # Add to terminal log for clean terminal view
     terminal_log.append({
         'type': 'input',
         'content': user_input + "\n",
         'timestamp': datetime.datetime.now()
     })
     
-    # Send input to process
     process.stdin.write((user_input + "\n").encode())
     await process.stdin.drain()
     context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
     
-    # Acknowledge the input
     await update.message.reply_text(f"Input sent: {user_input}")
     
     return RUNNING
@@ -394,11 +345,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
         
-        # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
         terminal_log.sort(key=lambda x: x['timestamp'])
         
-        # Filter execution log to keep only compilation success and program completion messages
         filtered_execution_log = [
             entry for entry in execution_log 
             if entry['type'] == 'system' and (
@@ -408,7 +357,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             )
         ]
         
-        # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -427,13 +375,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     -o-tab-size: 4;
                 }}
                 .source-code {{ 
-                    page-break-inside: avoid; /* Try to keep source code on one page */
-                    max-height: 800px; /* Limit height to fit on one page */
-                    overflow-y: auto; /* Add scrollbar if needed */
+                    page-break-inside: avoid;
+                    max-height: 800px;
+                    overflow-y: auto;
                     background-color: #f8f9fa; 
                     padding: 15px; 
                     border-radius: 5px; 
-                    font-size: 0.9em; /* Slightly smaller font to fit more code */
+                    font-size: 0.9em;
                     line-height: 1.4;
                     white-space: pre;
                 }}
@@ -444,33 +392,51 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .execution-flow {{ margin-top: 20px; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
-                .interaction {{ border: 1px solid #eee; margin-bottom: 15px; padding: 10px; border-radius: 5px; }}
                 .terminal {{ 
-                    background-color: #2b2b2b; 
+                    background-color: #1a1a1a;
                     color: #f8f8f2; 
                     padding: 20px; 
                     border-radius: 5px; 
-                    font-family: monospace; 
+                    font-family: 'Courier New', Courier, monospace;
                     white-space: pre; 
-                    line-height: 1.5;
-                    margin: 0;
-                    padding-left: 0;
+                    line-height: 1.6;
+                    border: 1px solid #333;
+                    box-shadow: inset 0 0 5px rgba(0,0,0,0.3);
                     tab-size: 4;
                     -moz-tab-size: 4;
                     -o-tab-size: 4;
                 }}
                 .terminal-line {{
                     margin: 0;
-                    padding-left: 10px;  /* Add consistent indentation to each line */
-                    white-space: pre;    /* Preserve all whitespace including tabs */
+                    padding-left: 15px;
+                    display: block;
+                    white-space: pre;
+                }}
+                .terminal-prompt {{ 
+                    color: #9b59b6;
+                }}
+                .terminal-input {{ 
+                    color: #27ae60;
+                    font-weight: bold;
+                }}
+                .terminal-output {{ 
+                    color: #f8f8f2;
                 }}
                 @media print {{
                     .source-code {{ 
                         page-break-inside: avoid;
-                        max-height: none; /* Remove height limit for printing */
+                        max-height: none;
                     }}
-                    .terminal {{ page-break-before: always; }}
-                    h2 {{ page-break-before: always; }}
+                    .terminal {{ 
+                        page-break-before: always; 
+                        background-color: #fff;
+                        color: #000;
+                        border: 1px solid #000;
+                        box-shadow: none;
+                    }}
+                    .terminal-prompt {{ color: #000; }}
+                    .terminal-input {{ color: #000; font-weight: bold; }}
+                    .terminal-output {{ color: #000; }}
                 }}
             </style>
         </head>
@@ -483,39 +449,39 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <h2>Terminal View</h2>
             <pre class="terminal">"""
         
-        # Create a clean terminal view that focuses on program prompts and user inputs
         terminal_content = ""
         for entry in terminal_log:
             entry_type = entry['type']
             content = entry['content']
+            lines = content.splitlines(True)
             
-            # Process the content line by line to add indentation to each line
-            lines = content.splitlines(True)  # Keep line endings
             for line in lines:
-                if line.strip():  # Only process non-empty lines
-                    # Add a consistent indentation to each line
-                    # Replace tabs with appropriate number of spaces for display
-                    line_with_tabs = line.replace('\t', '    ')  # Replace tabs with 4 spaces for display
-                    terminal_content += f'<span class="terminal-line">  {html.escape(line_with_tabs)}</span>'
+                if line.strip():
+                    escaped_line = html.escape(line.rstrip('\n'))
+                    display_line = escaped_line.replace('\t', '    ')
+                    
+                    if entry_type == 'input':
+                        terminal_content += f'<span class="terminal-line terminal-input">> {display_line}</span>\n'
+                    elif entry_type == 'output' and 'prompt' in [e['type'] for e in execution_log if e['message'] == line.strip()]:
+                        terminal_content += f'<span class="terminal-line terminal-prompt">{display_line}</span>\n'
+                    else:
+                        terminal_content += f'<span class="terminal-line terminal-output">{display_line}</span>\n'
                 else:
-                    terminal_content += html.escape(line)
+                    terminal_content += '<span class="terminal-line"></span>\n'
         
         html_content += terminal_content
         
         html_content += """</pre>
         """
         
-        # Add only the system messages for compilation success and program completion
         if filtered_execution_log:
             html_content += """
             <h2>System Messages</h2>
             <div class="execution-flow">
             """
-            
             for entry in filtered_execution_log:
-                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]
                 html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
-            
             html_content += """
             </div>
             """
@@ -528,7 +494,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
         
-        # Generate PDF with wkhtmltopdf with specific options for better layout
         pdf_process = subprocess.run(
             [
                 "wkhtmltopdf",
@@ -538,7 +503,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 "--margin-bottom", "10mm",
                 "--margin-left", "10mm",
                 "--margin-right", "10mm",
-                "--disable-smart-shrinking",  # Prevents unexpected scaling
+                "--disable-smart-shrinking",
                 "output.html",
                 "output.pdf"
             ],
@@ -556,7 +521,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     filename="program_execution.html"
                 )
         else:
-            # Send both PDF and HTML for maximum compatibility
             await update.message.reply_text("Generating execution report...")
             with open('output.pdf', 'rb') as pdf_file:
                 await context.bot.send_document(
@@ -564,7 +528,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     document=pdf_file,
                     filename="program_execution.pdf"
                 )
-            
             with open('output.html', 'rb') as html_file:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id, 
@@ -591,7 +554,6 @@ async def cleanup(context: CallbackContext):
         except Exception as e:
             logger.error(f"Error during process cleanup: {str(e)}")
     
-    # Clean up temporary files
     for file in ["temp.c", "temp", "output.pdf", "output.html"]:
         if os.path.exists(file):
             try:
@@ -608,10 +570,8 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 
 def main() -> None:
     try:
-        # Build the application
         application = Application.builder().token(TOKEN).build()
         
-        # Define the conversation handler
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
@@ -621,10 +581,8 @@ def main() -> None:
             fallbacks=[CommandHandler('cancel', cancel)],
         )
         
-        # Add handler to application
         application.add_handler(conv_handler)
         
-        # Log startup and start polling
         logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
         
