@@ -174,9 +174,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                 output_seen = True
                 
                 # Add to terminal log for clean terminal view
+                # Trim any leading whitespace to prevent unwanted indentation
                 terminal_log.append({
                     'type': 'output',
-                    'content': decoded_chunk,
+                    'content': decoded_chunk.lstrip(' '),
                     'timestamp': datetime.datetime.now()
                 })
                 
@@ -344,8 +345,17 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .execution-flow {{ margin-top: 20px; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
                 .interaction {{ border: 1px solid #eee; margin-bottom: 15px; padding: 10px; border-radius: 5px; }}
-                .terminal {{ background-color: #2b2b2b; color: #f8f8f2; padding: 20px; border-radius: 5px; font-family: monospace; white-space: pre; line-height: 1.5; }}
-                .terminal-line {{ margin: 0; padding: 0; }}
+                .terminal {{ 
+                    background-color: #2b2b2b; 
+                    color: #f8f8f2; 
+                    padding: 20px; 
+                    border-radius: 5px; 
+                    font-family: monospace; 
+                    white-space: pre; 
+                    line-height: 1.5;
+                    margin: 0;
+                    padding-left: 0;
+                }}
             </style>
         </head>
         <body>
@@ -355,8 +365,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <pre><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
-            <div class="terminal">
-        """
+            <pre class="terminal">"""
         
         # Create a clean terminal view that focuses on program prompts and user inputs
         terminal_content = ""
@@ -365,12 +374,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             content = entry['content']
             
             # Add content directly to maintain exact terminal appearance
+            # Ensure no unwanted spaces are added
             terminal_content += html.escape(content)
         
-        html_content += terminal_content
+        html_content += terminal_content.lstrip()  # Remove any leading whitespace from the entire terminal content
         
-        html_content += """
-            </div>
+        html_content += """</pre>
             
             <h2>Execution Flow</h2>
             <div class="execution-flow">
