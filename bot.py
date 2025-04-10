@@ -16,6 +16,7 @@ import telegram.error
 import html
 import time
 import datetime
+import re
 
 # Set up logging
 logging.basicConfig(
@@ -47,7 +48,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['errors'] = []
     context.user_data['waiting_for_input'] = False
     context.user_data['execution_log'] = []  # Track full execution flow
-    context.user_data['last_prompt'] = None  # Track the last prompt for better sequencing
+    context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
     
     try:
         with open("temp.c", "w") as file:
@@ -95,14 +96,18 @@ async def read_process_output(update: Update, context: CallbackContext):
     output = context.user_data['output']
     errors = context.user_data['errors']
     execution_log = context.user_data['execution_log']
+    output_buffer = context.user_data['output_buffer']
     
     # Flag to track if we've seen any output that might indicate input is needed
     output_seen = False
     
+    # Use a smaller read size to capture output more frequently
+    read_size = 1024
+    
     while True:
-        # Read stdout and stderr concurrently
-        stdout_task = asyncio.create_task(process.stdout.readline())
-        stderr_task = asyncio.create_task(process.stderr.readline())
+        # Read stdout and stderr in chunks rather than lines
+        stdout_task = asyncio.create_task(process.stdout.read(read_size))
+        stderr_task = asyncio.create_task(process.stderr.read(read_size))
         
         # Wait for either stdout or stderr to have data, or for a short timeout
         done, pending = await asyncio.wait(
@@ -119,8 +124,15 @@ async def read_process_output(update: Update, context: CallbackContext):
             # Check if process has finished
             if process.returncode is not None:
                 # Process ended without more output
+                # If there's any remaining data in the buffer, process it
+                if output_buffer:
+                    # Process any remaining buffered output
+                    process_output_chunk(context, output_buffer, update)
+                    output_buffer = ""
+                    context.user_data['output_buffer'] = ""
+                
                 if output_seen:
-                    # Only prompt for input if we've seen some output
+                    # Only send completion message if we've seen some output
                     execution_log.append({
                         'type': 'system',
                         'message': 'Program execution completed.',
@@ -136,6 +148,12 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             # If we've seen output but no new output for a while, it might be waiting for input
             if output_seen and not context.user_data.get('waiting_for_input', False):
+                # Process any buffered output before prompting for input
+                if output_buffer:
+                    process_output_chunk(context, output_buffer, update)
+                    output_buffer = ""
+                    context.user_data['output_buffer'] = ""
+                
                 context.user_data['waiting_for_input'] = True
                 execution_log.append({
                     'type': 'system',
@@ -148,51 +166,38 @@ async def read_process_output(update: Update, context: CallbackContext):
 
         # Handle stdout (program output)
         if stdout_task in done:
-            stdout_line = await stdout_task
-            if stdout_line:
-                decoded_line = stdout_line.decode().strip()
-                
-                # Store the raw output
-                output.append(decoded_line)
+            stdout_chunk = await stdout_task
+            if stdout_chunk:
+                decoded_chunk = stdout_chunk.decode()
                 output_seen = True
                 
-                # Check if this is likely a prompt (ends with : or >)
-                is_prompt = decoded_line.rstrip().endswith((':','>','?'))
+                # Append to buffer and process
+                output_buffer += decoded_chunk
+                context.user_data['output_buffer'] = output_buffer
                 
-                # Add to execution log with appropriate type
-                log_entry = {
-                    'type': 'prompt' if is_prompt else 'output',
-                    'message': decoded_line,
-                    'timestamp': datetime.datetime.now(),
-                    'raw': stdout_line.decode()  # Store raw output with newlines
-                }
-                
-                # If it's a prompt, store it for later association with input
-                if is_prompt:
-                    context.user_data['last_prompt'] = log_entry
-                else:
-                    execution_log.append(log_entry)
-                
-                # Display to user with appropriate prefix
-                prefix = "Program prompt:" if is_prompt else "Program output:"
-                await update.message.reply_text(f"{prefix} {decoded_line}")
+                # Process the buffer
+                output_buffer = process_output_chunk(context, output_buffer, update)
+                context.user_data['output_buffer'] = output_buffer
 
         # Handle stderr (errors)
         if stderr_task in done:
-            stderr_line = await stderr_task
-            if stderr_line:
-                decoded_line = stderr_line.decode().strip()
-                errors.append(decoded_line)
+            stderr_chunk = await stderr_task
+            if stderr_chunk:
+                decoded_chunk = stderr_chunk.decode()
                 
-                # Add to execution log
-                execution_log.append({
-                    'type': 'error',
-                    'message': decoded_line,
-                    'timestamp': datetime.datetime.now(),
-                    'raw': stderr_line.decode()  # Store raw output with newlines
-                })
-                
-                await update.message.reply_text(f"Error: {decoded_line}")
+                # Process error lines
+                for line in decoded_chunk.splitlines(True):  # Keep line endings
+                    errors.append(line.strip())
+                    
+                    # Add to execution log
+                    execution_log.append({
+                        'type': 'error',
+                        'message': line.strip(),
+                        'timestamp': datetime.datetime.now(),
+                        'raw': line  # Store raw output with newlines
+                    })
+                    
+                    await update.message.reply_text(f"Error: {line.strip()}")
 
         # Cancel pending tasks
         for task in pending:
@@ -200,6 +205,10 @@ async def read_process_output(update: Update, context: CallbackContext):
 
         # Check if process has finished
         if process.returncode is not None:
+            # Process any remaining buffered output
+            if output_buffer:
+                process_output_chunk(context, output_buffer, update)
+            
             execution_log.append({
                 'type': 'system',
                 'message': 'Program execution completed.',
@@ -208,6 +217,45 @@ async def read_process_output(update: Update, context: CallbackContext):
             await update.message.reply_text("Program execution completed.")
             await generate_and_send_pdf(update, context)
             break
+
+def process_output_chunk(context, buffer, update):
+    """Process the output buffer, extracting complete lines and preserving partial lines."""
+    execution_log = context.user_data['execution_log']
+    output = context.user_data['output']
+    
+    # Split the buffer into lines, preserving the line endings
+    lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
+    
+    # If the buffer doesn't end with a newline, keep the last part for next time
+    new_buffer = ""
+    if lines and not buffer.endswith('\n'):
+        new_buffer = lines[-1]
+        lines = lines[:-1]
+    
+    # Process each complete line
+    for line in lines:
+        line_stripped = line.strip()
+        if line_stripped:
+            output.append(line_stripped)
+            
+            # Check if this is likely a prompt (ends with : or >)
+            is_prompt = line_stripped.rstrip().endswith((':','>','?'))
+            
+            # Add to execution log with appropriate type
+            log_entry = {
+                'type': 'prompt' if is_prompt else 'output',
+                'message': line_stripped,
+                'timestamp': datetime.datetime.now(),
+                'raw': line  # Store raw output with newlines
+            }
+            
+            execution_log.append(log_entry)
+            
+            # Display to user with appropriate prefix
+            prefix = "Program prompt:" if is_prompt else "Program output:"
+            asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
+    
+    return new_buffer
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
@@ -229,13 +277,6 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.wait()
         await generate_and_send_pdf(update, context)
         return ConversationHandler.END
-
-    # If there was a last prompt, add it to the execution log now
-    # This ensures proper sequencing (prompt -> input -> output)
-    last_prompt = context.user_data.get('last_prompt')
-    if last_prompt and last_prompt not in execution_log:
-        execution_log.append(last_prompt)
-        context.user_data['last_prompt'] = None
     
     # Add user input to execution log
     execution_log.append({
@@ -284,6 +325,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .execution-flow {{ margin-top: 20px; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
                 .interaction {{ border: 1px solid #eee; margin-bottom: 15px; padding: 10px; border-radius: 5px; }}
+                .terminal {{ background-color: #2b2b2b; color: #f8f8f2; padding: 20px; border-radius: 5px; font-family: monospace; white-space: pre; line-height: 1.5; }}
+                .terminal-line {{ margin: 0; padding: 0; }}
             </style>
         </head>
         <body>
@@ -299,7 +342,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Add execution log with precise timestamps and preserve newlines
         for i, entry in enumerate(execution_log):
             entry_type = entry['type']
-            message = entry.get('raw', entry['message'])  # Use raw message if available to preserve newlines
+            message = entry.get('message', '')
+            raw = entry.get('raw', message)  # Use raw message if available to preserve newlines
             timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
             
             if entry_type == 'output':
@@ -313,28 +357,35 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             elif entry_type == 'system':
                 html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(message)}</pre></div>\n'
         
-        # Add a reconstructed interaction view
+        # Add a reconstructed interaction view with terminal-like formatting
         html_content += """
             </div>
             
-            <h2>Reconstructed Program Interaction</h2>
-            <div class="interaction">
-                <pre>
+            <h2>Terminal View</h2>
+            <div class="terminal">
 """
         
         # Create a clean representation of the program interaction
-        interaction_text = ""
+        # Group entries by type to reconstruct the terminal view
+        terminal_lines = []
+        
         for entry in execution_log:
             entry_type = entry['type']
-            message = entry.get('raw', entry['message'])
             
             if entry_type in ('output', 'prompt'):
-                interaction_text += message
+                # For output and prompts, add them directly to terminal lines
+                # Use raw content if available to preserve formatting
+                raw_content = entry.get('raw', entry.get('message', ''))
+                terminal_lines.append(html.escape(raw_content))
             elif entry_type == 'input':
-                interaction_text += message + "\n"
+                # For input, add the input followed by a newline
+                terminal_lines.append(html.escape(entry['message'] + "\n"))
         
-        html_content += html.escape(interaction_text) + """
-                </pre>
+        # Join terminal lines and add to HTML
+        terminal_content = "".join(terminal_lines)
+        html_content += terminal_content
+        
+        html_content += """
             </div>
         </body>
         </html>
