@@ -293,7 +293,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         'timestamp': datetime.datetime.now()
     })
     
-    process.stdin.write((user_input + "\n").encode())
+    process.stdin.write((user_input + " \n").encode())  # Add space before newline to match input alignment
     await process.stdin.drain()
     context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
@@ -318,6 +318,40 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             )
         ]
         
+        # Process terminal log into formatted string
+        terminal_content = ""
+        prompts = []
+        table_data = []
+        for entry in terminal_log:
+            content = entry['content'].rstrip()
+            if entry['type'] == 'input':
+                terminal_content += f"> {content}  "  # Add space after input to match alignment
+            elif entry['type'] == 'output':
+                if any(prompt['type'] == 'prompt' and prompt['message'] in content for prompt in execution_log):
+                    prompts.append(content)
+                else:
+                    # Assume tabulated data starts after prompts
+                    if "PID" in content or "Burst" in content or "Turnaround" in content or "Waiting" in content:
+                        table_data.append(content.split())
+                    else:
+                        table_data.append(content.split())
+
+        # Add prompts
+        terminal_content += "\n".join(prompts) + "\n"
+
+        # Format table
+        if table_data:
+            # Determine max widths for each column
+            max_widths = [max((len(str(x)) for x in col), default=0) for col in zip(*([["PID", "Burst Time", "Turnaround Time", "Waiting Time"]] + table_data))]
+            header = "PID".ljust(max_widths[0]) + "  " + "Burst Time".ljust(max_widths[1]) + "  " + "Turnaround Time".ljust(max_widths[2]) + "  " + "Waiting Time".ljust(max_widths[3])
+            terminal_content += header + "\n"
+            for row in table_data:
+                formatted_row = " ".join(str(x).ljust(max_widths[i]) for i, x in enumerate(row[:4]))  # Limit to 4 columns
+                terminal_content += formatted_row + "\n"
+            # Add averages if present
+            if "Average" in terminal_content:
+                terminal_content += "\n".join(line for line in table_data[-2:] if "Average" in line)
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -360,22 +394,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-radius: 5px; 
                     font-family: 'Courier New', Courier, monospace;
                     white-space: pre; 
-                    line-height: 1; /* No extra vertical spacing */
+                    line-height: 1;
                     border: 1px solid #333;
                     box-shadow: inset 0 0 5px rgba(0,0,0,0.3);
                     tab-size: 4;
                     -moz-tab-size: 4;
                     -o-tab-size: 4;
-                }}
-                .terminal-prompt {{ 
-                    color: #9b59b6;
-                }}
-                .terminal-input {{ 
-                    color: #27ae60;
-                    font-weight: bold;
-                }}
-                .terminal-output {{ 
-                    color: #f8f8f2;
                 }}
                 @media print {{
                     .source-code {{ 
@@ -389,9 +413,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                         border: 1px solid #000;
                         box-shadow: none;
                     }}
-                    .terminal-prompt {{ color: #000; }}
-                    .terminal-input {{ color: #000; font-weight: bold; }}
-                    .terminal-output {{ color: #000; }}
                 }}
             </style>
         </head>
@@ -402,26 +423,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <pre class="source-code"><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
-            <pre class="terminal">"""
-        
-        terminal_content = ""
-        for entry in terminal_log:
-            entry_type = entry['type']
-            content = entry['content']
-            # Replace tabs with 4 spaces for consistent terminal rendering
-            content = content.replace('\t', '    ')
-            escaped_content = html.escape(content)
-            
-            if entry_type == 'input':
-                terminal_content += f'<span class="terminal-input">> {escaped_content}</span>'
-            elif entry_type == 'output' and 'prompt' in [e['type'] for e in execution_log if e['message'] == content.strip()]:
-                terminal_content += f'<span class="terminal-prompt">{escaped_content}</span>'
-            else:
-                terminal_content += f'<span class="terminal-output">{escaped_content}</span>'
-        
-        html_content += terminal_content
-        
-        html_content += """</pre>
+            <pre class="terminal">{html.escape(terminal_content)}</pre>
         """
         
         if filtered_execution_log:
@@ -546,4 +548,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-    
