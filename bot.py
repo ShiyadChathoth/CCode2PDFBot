@@ -293,7 +293,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         'timestamp': datetime.datetime.now()
     })
     
-    process.stdin.write((user_input + " \n").encode())  # Add space before newline to match input alignment
+    process.stdin.write((user_input + " \n").encode())  # Add space before newline
     await process.stdin.drain()
     context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
@@ -325,32 +325,48 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         for entry in terminal_log:
             content = entry['content'].rstrip()
             if entry['type'] == 'input':
-                terminal_content += f"> {content}  "  # Add space after input to match alignment
+                terminal_content += f"> {content}  "
             elif entry['type'] == 'output':
                 if any(prompt['type'] == 'prompt' and prompt['message'] in content for prompt in execution_log):
                     prompts.append(content)
                 else:
-                    # Assume tabulated data starts after prompts
-                    if "PID" in content or "Burst" in content or "Turnaround" in content or "Waiting" in content:
-                        table_data.append(content.split())
+                    # Split into potential table rows
+                    parts = content.split()
+                    if len(parts) >= 4 and all(part.isdigit() or part.replace('.', '').isdigit() for part in parts[:4]):
+                        table_data.append(parts[:4])  # Take first 4 numeric parts as table row
+                    elif "Process execution order" in content or "Average" in content:
+                        prompts.append(content)
                     else:
-                        table_data.append(content.split())
+                        prompts.append(content)
 
-        # Add prompts
-        terminal_content += "\n".join(prompts) + "\n"
+        # Add prompts and inputs
+        if prompts:
+            terminal_content += "\n".join(prompts) + "\n"
 
-        # Format table
+        # Format table with fixed column widths
         if table_data:
-            # Determine max widths for each column
-            max_widths = [max((len(str(x)) for x in col), default=0) for col in zip(*([["PID", "Burst Time", "Turnaround Time", "Waiting Time"]] + table_data))]
-            header = "PID".ljust(max_widths[0]) + "  " + "Burst Time".ljust(max_widths[1]) + "  " + "Turnaround Time".ljust(max_widths[2]) + "  " + "Waiting Time".ljust(max_widths[3])
+            # Define fixed widths based on observed data (adjust if needed)
+            pid_width = 4
+            burst_width = 10
+            turnaround_width = 15
+            waiting_width = 12
+            
+            # Header
+            header = ("PID".ljust(pid_width) + " " +
+                     "Burst Time".ljust(burst_width) + " " +
+                     "Turnaround Time".ljust(turnaround_width) + " " +
+                     "Waiting Time".ljust(waiting_width))
             terminal_content += header + "\n"
+            
+            # Data rows
             for row in table_data:
-                formatted_row = " ".join(str(x).ljust(max_widths[i]) for i, x in enumerate(row[:4]))  # Limit to 4 columns
+                formatted_row = (" ".join(str(x).ljust(width) for x, width in zip(row, [pid_width, burst_width, turnaround_width, waiting_width])))
                 terminal_content += formatted_row + "\n"
-            # Add averages if present
-            if "Average" in terminal_content:
-                terminal_content += "\n".join(line for line in table_data[-2:] if "Average" in line)
+        
+        # Add averages if present
+        for prompt in prompts:
+            if "Average" in prompt:
+                terminal_content += prompt + "\n"
 
         html_content = f"""
         <!DOCTYPE html>
@@ -535,7 +551,7 @@ def main() -> None:
         
         application.add_handler(conv_handler)
         
-        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
+        logger.info("Bot is about to start polling with token: %s", TOKEN[:4] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
         
     except telegram.error.Conflict as e:
