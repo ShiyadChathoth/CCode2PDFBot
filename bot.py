@@ -77,12 +77,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
     context.user_data['terminal_log'] = []  # Specific log for terminal view
     
-    # Add a simulated command prompt to make it look more like a real terminal
-    context.user_data['terminal_log'].append({
-        'type': 'prompt',
-        'content': 'shiyad@shiyad-lenovo:~$ ./a.out\n',
-        'timestamp': datetime.datetime.now()
-    })
+    # No longer adding command prompts to terminal log
     
     try:
         with open("temp.c", "w") as file:
@@ -215,12 +210,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     
-                    # Add a final command prompt to make it look more like a real terminal
-                    terminal_log.append({
-                        'type': 'prompt',
-                        'content': 'shiyad@shiyad-lenovo:~$ ',
-                        'timestamp': datetime.datetime.now()
-                    })
+                    # No longer adding final command prompt
                     
                     await update.message.reply_text("Program execution completed.")
                     await generate_and_send_pdf(update, context)
@@ -307,12 +297,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                 'timestamp': datetime.datetime.now()
             })
             
-            # Add a final command prompt to make it look more like a real terminal
-            terminal_log.append({
-                'type': 'prompt',
-                'content': 'shiyad@shiyad-lenovo:~$ ',
-                'timestamp': datetime.datetime.now()
-            })
+            # No longer adding final command prompt
             
             await update.message.reply_text("Program execution completed.")
             await generate_and_send_pdf(update, context)
@@ -475,6 +460,28 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
+                
+                /* Table formatting for terminal output */
+                .terminal-table {{
+                    font-family: 'Courier New', monospace;
+                    border-spacing: 0;
+                    width: 100%;
+                    color: #00ff00;
+                    margin-top: 10px;
+                    margin-bottom: 10px;
+                    white-space: pre;
+                }}
+                .terminal-row {{
+                    line-height: 1.5;
+                }}
+                .terminal-cell {{
+                    padding-right: 20px;
+                }}
+                .terminal-header {{
+                    padding-bottom: 5px;
+                    text-align: left;
+                }}
+                
                 @media print {{
                     .source-code {{ 
                         page-break-inside: avoid;
@@ -504,14 +511,55 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             entry_type = entry['type']
             content = entry['content']
             
-            # Process the content line by line to preserve formatting
-            lines = content.splitlines(True)  # Keep line endings
-            for line in lines:
-                # Replace tabs with appropriate number of spaces for display
-                line_with_tabs = line.replace('\t', '    ')  # Replace tabs with 4 spaces for display
-                terminal_content += html.escape(line_with_tabs)
-            
-            i += 1
+            # Skip command prompts (type 'prompt')
+            if entry_type == 'prompt':
+                i += 1
+                continue
+                
+            # Check if this might be a table header
+            if "PID" in content and "Burst Time" in content and "Turnaround Time" in content:
+                # This looks like a table header, let's format it as a table
+                table_content = '<table class="terminal-table">\n'
+                
+                # Process header
+                headers = re.findall(r'\b(\w+(?:\s+\w+)*)\b', content)
+                table_content += '<tr class="terminal-row">\n'
+                for header in headers:
+                    table_content += f'  <th class="terminal-header">{html.escape(header)}</th>\n'
+                table_content += '</tr>\n'
+                
+                # Look ahead for table rows
+                j = i + 1
+                while j < len(terminal_log) and terminal_log[j]['type'] == 'output':
+                    row_content = terminal_log[j]['content']
+                    # Check if this is a data row (contains mostly numbers)
+                    if re.match(r'^\s*\d+\s+\d+', row_content):
+                        # Extract numbers with proper spacing
+                        cells = re.findall(r'\s*(\d+)\s*', row_content)
+                        if cells:
+                            table_content += '<tr class="terminal-row">\n'
+                            for cell in cells:
+                                table_content += f'  <td class="terminal-cell">{html.escape(cell)}</td>\n'
+                            table_content += '</tr>\n'
+                        j += 1
+                    else:
+                        break
+                
+                table_content += '</table>\n'
+                terminal_content += table_content
+                i = j  # Skip the rows we've already processed
+            else:
+                # Process the content line by line to preserve formatting
+                lines = content.splitlines(True)  # Keep line endings
+                for line in lines:
+                    if line.strip():  # Only process non-empty lines
+                        # Replace tabs with appropriate number of spaces for display
+                        line_with_tabs = line.replace('\t', '    ')  # Replace tabs with 4 spaces for display
+                        terminal_content += html.escape(line_with_tabs)
+                    else:
+                        terminal_content += html.escape(line)
+                
+                i += 1
         
         html_content += terminal_content
         
