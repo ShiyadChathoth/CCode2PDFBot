@@ -453,8 +453,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-family: 'Courier New', monospace;
                     border-collapse: collapse;
                     width: 100%;
-                    margin: 15px 0;
+                    margin: 0;
                     table-layout: fixed;
+                    background-color: transparent !important;
                 }}
                 /* Fixed column widths for FCFS table */
                 .terminal-table col.col-pid {{ width: 50px; }}
@@ -463,7 +464,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .terminal-table col.col-waiting {{ width: 120px; }}
                 .terminal-table th, .terminal-table td {{ 
                     text-align: left;
-                    padding: 4px 8px;
+                    padding: 0 8px;
                     font-size: 14px;
                     font-feature-settings: "tnum";
                     font-variant-numeric: tabular-nums;
@@ -474,13 +475,30 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 .terminal-table tr {{ 
                     background-color: transparent !important;
+                    background: none !important;
+                }}
+                .terminal-table tr:nth-child(odd) {{ 
+                    background-color: transparent !important;
+                    background: none !important;
+                }}
+                .terminal-table tr:nth-child(even) {{ 
+                    background-color: transparent !important;
+                    background: none !important;
+                }}
+                .terminal-table tbody {{ 
+                    background-color: transparent !important;
+                    background: none !important;
                 }}
                 .terminal-table th {{ 
                     font-weight: normal;
                     border-bottom: none;
+                    background-color: transparent !important;
+                    background: none !important;
                 }}
                 .terminal-table td {{ 
                     border-bottom: none;
+                    background-color: transparent !important;
+                    background: none !important;
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
@@ -531,8 +549,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                         html_content += html.escape(processed_content)
                         processed_content = ""
                     
-                    # Start a new HTML table with colgroup for fixed column widths
-                    html_content += '</pre><table class="terminal-table" style="border-collapse: collapse; width: 100%;">'
+                # Start a new HTML table with colgroup for fixed column widths
+                    html_content += '</pre><table class="terminal-table" style="border-collapse: collapse; width: 100%; background-color: transparent !important; background: none !important; border-spacing: 0;">'
                     html_content += '<colgroup>'
                     html_content += '<col class="col-pid">'
                     html_content += '<col class="col-burst">'
@@ -543,11 +561,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     # If this is a header row, process it specially
                     if is_table_header:
                         # For FCFS tables, use fixed column headers to ensure alignment
-                        html_content += '<thead><tr style="background-color: transparent !important;">'
-                        html_content += '<th style="text-align: left; padding: 2px 8px; font-weight: normal; background-color: transparent !important;">PID</th>'
-                        html_content += '<th style="text-align: left; padding: 2px 8px; font-weight: normal; background-color: transparent !important;">Burst Time</th>'
-                        html_content += '<th style="text-align: left; padding: 2px 8px; font-weight: normal; background-color: transparent !important;">Turnaround Time</th>'
-                        html_content += '<th style="text-align: left; padding: 2px 8px; font-weight: normal; background-color: transparent !important;">waiting Time</th>'
+                        html_content += '<thead><tr style="background-color: transparent !important; background: none !important;">'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: transparent !important; background: none !important;">PID</th>'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: transparent !important; background: none !important;">Burst Time</th>'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: transparent !important; background: none !important;">Turnaround Time</th>'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: transparent !important; background: none !important;">waiting Time</th>'
                         html_content += '</tr></thead><tbody>'
                         table_header = ['PID', 'Burst Time', 'Turnaround Time', 'waiting Time']
                         continue  # Skip adding this line to the table buffer
@@ -573,9 +591,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                             if len(cells) > 4:
                                 cells = cells[:4]
                                 
-                            html_content += '<tr style="background-color: transparent !important;">'
+                            html_content += '<tr style="background-color: transparent !important; background: none !important;">'
                             for cell in cells:
-                                html_content += f'<td style="text-align: left; padding: 2px 8px; font-weight: normal; background-color: transparent !important;">{html.escape(cell.strip())}</td>'
+                                html_content += f'<td style="text-align: left; padding: 0 8px; font-weight: normal; background-color: transparent !important; background: none !important;">{html.escape(cell.strip())}</td>'
                             html_content += '</tr>'
                         table_buffer = []
                     
@@ -600,9 +618,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 if len(cells) > 4:
                     cells = cells[:4]
                     
-                html_content += '<tr style="background-color: transparent !important;">'
+                html_content += '<tr style="background-color: transparent !important; background: none !important;">'
                 for cell in cells:
-                    html_content += f'<td style="text-align: left; padding: 2px 8px; font-weight: normal; background-color: transparent !important;">{html.escape(cell.strip())}</td>'
+                    html_content += f'<td style="text-align: left; padding: 0 8px; font-weight: normal; background-color: transparent !important; background: none !important;">{html.escape(cell.strip())}</td>'
                 html_content += '</tr>'
             html_content += '</tbody></table>'
         elif processed_content:
