@@ -385,12 +385,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
-                    font-size: 12px;
+                    font-size: 25px;
                     line-height: 1.3;
                     tab-size: 8;
                     -moz-tab-size: 8;
                     -o-tab-size: 8;
-                    background: #f8f8f8;
+                    background: #FFFFFF;
                     padding: 10px;
                     border-radius: 5px;
                 }}
@@ -402,10 +402,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
             
-            <h2>Source Code</h2>
+            <h1><u><strong>SOURCE CODE</strong></u></h1>
             <pre><code>{html.escape(code)}</code></pre>
             
-            <h2>Terminal Output</h2>
+            <h1><u><strong>OUTPUT</strong></u></h1>
             <div class="terminal-view">
                 {reconstruct_terminal_view(context)}
             </div>
