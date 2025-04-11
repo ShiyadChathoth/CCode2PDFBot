@@ -387,7 +387,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
-                    font-size: 16px;
+                    font-size: 18px;
                     line-height: 1.3;
                     tab-size: 8;
                     -moz-tab-size: 8;
@@ -447,11 +447,11 @@ def reconstruct_terminal_view(context):
         # Double tab width for better PDF readability while maintaining alignment
         raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
         return f"""
-         <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
+        <h1 style="font-size: 18px;"><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
         <div style="
             font-family: 'Courier New', monospace;
             white-space: pre;
-            font-size: 16px;
+            font-size: 18px;
             line-height: 1.2;
             background: #FFFFFF;
             padding: 10px;
