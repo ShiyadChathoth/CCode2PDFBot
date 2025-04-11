@@ -469,14 +469,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-variant-numeric: tabular-nums;
                     white-space: nowrap;
                     overflow: hidden;
+                    background-color: transparent;
+                    border: none;
                 }}
                 .terminal-table th {{ 
-                    background-color: #f2f2f2;
-                    font-weight: bold;
-                    border-bottom: 2px solid #ddd;
+                    font-weight: normal;
+                    border-bottom: none;
                 }}
                 .terminal-table td {{ 
-                    border-bottom: 1px solid #f0f0f0;
+                    border-bottom: none;
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
@@ -528,7 +529,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                         processed_content = ""
                     
                     # Start a new HTML table with colgroup for fixed column widths
-                    html_content += '</pre><table class="terminal-table">'
+                    html_content += '</pre><table class="terminal-table" style="border-collapse: collapse; width: 100%;">'
                     html_content += '<colgroup>'
                     html_content += '<col class="col-pid">'
                     html_content += '<col class="col-burst">'
@@ -540,10 +541,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     if is_table_header:
                         # For FCFS tables, use fixed column headers to ensure alignment
                         html_content += '<thead><tr>'
-                        html_content += '<th>PID</th>'
-                        html_content += '<th>Burst Time</th>'
-                        html_content += '<th>Turnaround Time</th>'
-                        html_content += '<th>waiting Time</th>'
+                        html_content += '<th style="text-align: left; padding: 8px; font-weight: normal;">PID</th>'
+                        html_content += '<th style="text-align: left; padding: 8px; font-weight: normal;">Burst Time</th>'
+                        html_content += '<th style="text-align: left; padding: 8px; font-weight: normal;">Turnaround Time</th>'
+                        html_content += '<th style="text-align: left; padding: 8px; font-weight: normal;">waiting Time</th>'
                         html_content += '</tr></thead><tbody>'
                         table_header = ['PID', 'Burst Time', 'Turnaround Time', 'waiting Time']
                         continue  # Skip adding this line to the table buffer
@@ -571,7 +572,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                                 
                             html_content += '<tr>'
                             for cell in cells:
-                                html_content += f'<td>{html.escape(cell.strip())}</td>'
+                                html_content += f'<td style="text-align: left; padding: 8px; font-weight: normal;">{html.escape(cell.strip())}</td>'
                             html_content += '</tr>'
                         table_buffer = []
                     
