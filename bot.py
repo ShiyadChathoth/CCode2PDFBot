@@ -387,14 +387,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
-                    font-size: 20px;
+                    font-size: 16px;
                     line-height: 1.3;
                     tab-size: 8;
                     -moz-tab-size: 8;
                     -o-tab-size: 8;
                     background: #FFFFFF;
                     padding: 10px;
-                    border-radius: 5px;
+                    border-radius: 3px;
                 }}
                 .terminal-view {{
                     margin: 10px 0;
@@ -452,7 +452,7 @@ def reconstruct_terminal_view(context):
         <div style="
             font-family: 'Courier New', monospace;
             white-space: pre;
-            font-size: 20px;
+            font-size: 16px;
             line-height: 1.2;
             background: #FFFFFF;
             padding: 10px;
