@@ -397,6 +397,25 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .terminal-view {{
                     margin: 15px 0;
                 }}
+                table.process-table {{
+                    border-collapse: collapse;
+                    width: 100%;
+                    margin: 15px 0;
+                    font-family: 'Courier New', monospace;
+                    font-size: 12px;
+                }}
+                table.process-table th, table.process-table td {{
+                    border: 1px solid #ddd;
+                    padding: 8px;
+                    text-align: center;
+                }}
+                table.process-table th {{
+                    background-color: #f2f2f2;
+                    font-weight: bold;
+                }}
+                table.process-table tr:nth-child(even) {{
+                    background-color: #f9f9f9;
+                }}
             </style>
         </head>
         <body>
@@ -416,13 +435,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
-        # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
-        pdf_filename = f"{sanitized_title}.pdf"
-        
         # Generate PDF
+        pdf_filename = "output.pdf"
         subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
 
         # Send PDF to user
@@ -441,44 +455,98 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs"""
+    """Preserve exact terminal formatting with tabs and convert tables to HTML tables"""
     terminal_log = context.user_data.get('terminal_log', [])
     
-    if terminal_log:
-        raw_output = ''.join(terminal_log)
-        # Double tab width for better PDF readability while maintaining alignment
-        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
-        return f"""
-        <div style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 12px;
-            line-height: 1.2;
-            background: #f8f8f8;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
-        ">{html.escape(raw_output)}</div>
-        """
+    if not terminal_log:
+        return "<pre>No terminal output available</pre>"
     
-    return "<pre>No terminal output available</pre>"
+    raw_output = ''.join(terminal_log)
     
-    # Otherwise try to reconstruct from execution log
-    if execution_log:
-        output_lines = []
-        for entry in execution_log:
-            if entry['type'] in ['output', 'prompt', 'error']:
-                # Get raw output if available, otherwise use message
-                line = entry.get('raw', entry['message'])
-                # Replace tabs with spaces and preserve all whitespace
-                line = line.replace('\t', '    ')
-                output_lines.append(line)
+    # Check if the output contains a process scheduling table
+    if "Order of execution:" in raw_output and "Burst Time" in raw_output and "Turnaround Time" in raw_output:
+        return format_process_scheduling_table(raw_output)
+    
+    # Default formatting for non-table output
+    raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+    return f"""
+    <div style="
+        font-family: 'Courier New', monospace;
+        white-space: pre;
+        font-size: 12px;
+        line-height: 1.2;
+        background: #f8f8f8;
+        padding: 15px;
+        border-radius: 5px;
+        overflow-x: auto;
+    ">{html.escape(raw_output)}</div>
+    """
+
+
+def format_process_scheduling_table(raw_output):
+    """Format process scheduling output as an HTML table with proper alignment"""
+    lines = raw_output.strip().split('\n')
+    result = []
+    table_started = False
+    table_header_found = False
+    table_rows = []
+    
+    # First add all non-table content as pre-formatted text
+    for line in lines:
+        if "Order of execution:" in line:
+            table_started = True
+            result.append(f"<pre>{html.escape(line)}</pre>")
+        elif table_started and "Burst Time" in line and "Turnaround Time" in line:
+            table_header_found = True
+            # Extract column headers
+            headers = re.findall(r'\b(\w+(?:\s+\w+)*)\b', line)
+            if len(headers) >= 3:  # At least PID, Burst Time, Turnaround Time
+                table_rows.append(headers)
+        elif table_header_found and re.match(r'^\s*\d+\s+\d+', line):
+            # This is a data row in the table
+            # Split by whitespace but preserve the structure
+            values = re.findall(r'\b(\d+)\b', line)
+            if len(values) >= 3:  # At least PID, Burst Time, Turnaround Time
+                table_rows.append(values)
+        elif not table_started:
+            result.append(f"<pre>{html.escape(line)}</pre>")
+        elif table_header_found and len(line.strip()) == 0:
+            # Empty line after table - end of table
+            break
+        else:
+            result.append(f"<pre>{html.escape(line)}</pre>")
+    
+    # If we found a table, format it as HTML
+    if table_rows and len(table_rows) > 1:
+        table_html = ['<table class="process-table">']
         
-        # Join all lines and wrap in <pre> tag to preserve formatting
-        formatted_output = f"<pre>{html.escape(''.join(output_lines))}</pre>"
-        return formatted_output
+        # Add header row
+        table_html.append('<tr>')
+        for header in table_rows[0]:
+            table_html.append(f'<th>{html.escape(header)}</th>')
+        table_html.append('</tr>')
+        
+        # Add data rows
+        for row in table_rows[1:]:
+            table_html.append('<tr>')
+            for cell in row:
+                table_html.append(f'<td>{html.escape(cell)}</td>')
+            table_html.append('</tr>')
+        
+        table_html.append('</table>')
+        result.append(''.join(table_html))
     
-    return "<pre>No terminal output available</pre>"
+    # Add any remaining lines after the table
+    if table_header_found:
+        found_end = False
+        for line in lines:
+            if found_end:
+                result.append(f"<pre>{html.escape(line)}</pre>")
+            elif table_header_found and len(line.strip()) == 0:
+                found_end = True
+    
+    return ''.join(result)
+
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
