@@ -387,25 +387,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
         
-        # Filter execution log to keep only compilation success and program completion messages
-        filtered_execution_log = [
-            entry for entry in execution_log 
-            if entry['type'] == 'system' and (
-                'compiled successfully' in entry['message'] or 
-                'execution completed' in entry['message']
-            )
-        ]
-        
         # Extract program inputs, outputs, and prompts
         inputs = [entry for entry in execution_log if entry['type'] == 'input']
         outputs = [entry for entry in execution_log if entry['type'] == 'output']
         prompts = [entry for entry in execution_log if entry['type'] == 'prompt']
         errors = [entry for entry in execution_log if entry['type'] == 'error']
         
-        # Reconstruct terminal view
-        terminal_view = reconstruct_terminal_view(context)
+        # Extract process data from execution log
+        process_data = extract_process_data_from_log(execution_log)
         
-        # Generate HTML content for the PDF
+        # Get system messages
+        system_messages = [entry for entry in execution_log if entry['type'] == 'system']
+        
+        # Generate HTML content for the PDF with clean terminal view
         html_content = f"""
         <html>
         <head>
@@ -413,58 +407,43 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 h1 {{ color: #333; }}
                 pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
-                .terminal {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; font-family: monospace; }}
+                .code-block {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; font-family: monospace; }}
+                .terminal-view {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; font-family: monospace; }}
                 .system-message {{ color: #0066cc; }}
                 .input {{ color: #009900; }}
                 .output {{ color: #000000; }}
                 .prompt {{ color: #990000; }}
                 .error {{ color: #cc0000; }}
                 table {{ border-collapse: collapse; width: 100%; margin: 15px 0; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                th {{ background-color: #f2f2f2; }}
-                .progress-container {{ 
-                    width: 100%; 
-                    background-color: #e0e0e0; 
-                    height: 20px; 
-                    margin: 5px 0; 
-                    border-radius: 4px; 
-                    overflow: hidden;
-                }}
-                .progress-bar {{ 
-                    height: 100%; 
-                    background-color: #4CAF50; 
-                    width: 0%; 
-                }}
+                th, td {{ padding: 8px; text-align: left; }}
+                .process-table {{ width: 100%; }}
+                .process-table th {{ background-color: #f2f2f2; padding: 8px; text-align: left; }}
+                .process-table td {{ padding: 8px; text-align: left; }}
+                .process-row {{ background-color: #f9f9f9; }}
+                .system-messages {{ margin-top: 20px; }}
+                .system-message-box {{ background-color: #f9f9f9; padding: 10px; margin: 5px 0; }}
+                .timestamp {{ color: #666; font-size: 0.9em; }}
+                .divider {{ border-top: 1px solid #ddd; margin: 20px 0; }}
+                h2 {{ color: #4b8bf4; font-size: 1.2em; margin-top: 20px; }}
             </style>
         </head>
         <body>
             <h1>Source Code</h1>
-            <pre><code>{html.escape(code)}</code></pre>
-            
-            <h1>Terminal View</h1>
-            <div class="terminal">
-                {terminal_view}
+            <div class="code-block">
+                <pre><code>{html.escape(code)}</code></pre>
             </div>
             
-            <h1>Execution Summary</h1>
-            <div class="system-message">
-                {filtered_execution_log[0]['message'] if filtered_execution_log else 'No compilation information available.'}
+            <h1 style="color: #4b8bf4;">Terminal View</h1>
+            <div class="terminal-view">
+                {generate_clean_terminal_view(context)}
             </div>
             
-            <h2>Program Inputs</h2>
-            <pre class="input">
-{html.escape(chr(10).join([f"> {entry['message']}" for entry in inputs]) if inputs else "No inputs provided.")}
-            </pre>
+            <div class="divider"></div>
             
-            <h2>Program Outputs</h2>
-            <pre class="output">
-{html.escape(chr(10).join([entry['message'] for entry in outputs]) if outputs else "No output generated.")}
-            </pre>
-            
-            <h2>Errors</h2>
-            <pre class="error">
-{html.escape(chr(10).join([entry['message'] for entry in errors]) if errors else "No errors occurred.")}
-            </pre>
+            <h2>System Messages</h2>
+            <div class="system-messages">
+                {generate_system_messages_html(system_messages)}
+            </div>
         </body>
         </html>
         """
@@ -489,7 +468,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
-                filename="execution_report.pdf",
+                filename="program_execution.pdf",
                 caption="Here's the execution report of your C code."
             )
         
@@ -498,7 +477,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=html_file,
-                filename="execution_report.html",
+                filename="program_execution.html",
                 caption="HTML version of the execution report for better viewing."
             )
     except Exception as e:
@@ -506,107 +485,74 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
-def reconstruct_terminal_view(context):
-    """Reconstruct the terminal view from execution log."""
+def generate_clean_terminal_view(context):
+    """Generate a clean terminal view with proper alignment based on execution log."""
     execution_log = context.user_data['execution_log']
     
-    # Extract process data if available
-    processes = context.user_data.get('processes', [])
-    
-    # If we have process data, create a visualization
-    if processes:
-        html_output = "<h3>Process Scheduling</h3>"
-        html_output += """
-        <table>
-            <tr>
-                <th>PID</th>
-                <th>Burst Time</th>
-                <th>Turnaround Time</th>
-                <th>Waiting Time</th>
-            </tr>
-        """
-        
-        for proc in processes:
-            pid = proc.get('pid', 0)
-            burst = proc.get('burst', 0)
-            turnaround = proc.get('turnaround', 0)
-            waiting = proc.get('waiting', 0)
-            progress_percent = min(100, int((burst / max(1, burst)) * 100))
-            
-            html_output += f"""
-            <tr>
-                <td>{pid}</td>
-                <td>{burst}</td>
-                <td>{turnaround}</td>
-                <td>{waiting}</td>
-            </tr>
-            <tr>
-                <td colspan="4">
-                    <div class="progress-container">
-                        <div class="progress-bar" style="width: {progress_percent}%;"></div>
-                    </div>
-                </td>
-            </tr>
-            """
-        
-        html_output += "</table>"
-        return html_output
-    
-    # If no process data, reconstruct from execution log
-    html_output = "<pre>"
-    
-    # Get all inputs, outputs, prompts, and errors
-    for entry in execution_log:
-        if entry['type'] == 'system':
-            html_output += f'<span class="system-message">{html.escape(entry["message"])}</span>\n'
-        elif entry['type'] == 'input':
-            html_output += f'<span class="input">&gt; {html.escape(entry["message"])}</span>\n'
-        elif entry['type'] == 'output':
-            html_output += f'<span class="output">{html.escape(entry["message"])}</span>\n'
-        elif entry['type'] == 'prompt':
-            html_output += f'<span class="prompt">{html.escape(entry["message"])}</span>\n'
-        elif entry['type'] == 'error':
-            html_output += f'<span class="error">Error: {html.escape(entry["message"])}</span>\n'
-    
-    html_output += "</pre>"
-    
-    # If we have process scheduling data in the output, visualize it
+    # Extract process data
     process_data = extract_process_data_from_log(execution_log)
-    if process_data:
-        html_output += "<h3>Process Scheduling</h3>"
-        html_output += """
-        <table>
-            <tr>
-                <th>PID</th>
-                <th>Burst Time</th>
-                <th>Turnaround Time</th>
-                <th>Waiting Time</th>
-            </tr>
+    
+    if not process_data:
+        return "<p>No process data available</p>"
+    
+    # Generate the terminal view HTML
+    html_output = ""
+    
+    # First, add the process input section
+    num_processes = len(process_data)
+    html_output += f"<p>Enter the no.of process: {num_processes}</p>"
+    
+    for i, proc in enumerate(process_data):
+        html_output += f"<p>Enter the Burst time of process {i} : {proc['burst']}</p>"
+    
+    # Add order of execution
+    html_output += "<p>Order of execution:</p>"
+    execution_order = "P0"
+    for i in range(1, num_processes):
+        execution_order += f"->P{i}"
+    html_output += f"<p>{execution_order}</p>"
+    
+    # Add the process table header
+    html_output += """
+    <table class="process-table">
+        <tr>
+            <th style="width: 15%;">PID</th>
+            <th style="width: 25%;">Burst Time</th>
+            <th style="width: 30%;">Turnaround Time</th>
+            <th style="width: 30%;">Waiting Time</th>
+        </tr>
+    """
+    
+    # Add each process row
+    for proc in process_data:
+        html_output += f"""
+        <tr class="process-row">
+            <td>{proc['pid']}</td>
+            <td>{proc['burst']}</td>
+            <td>{proc['turnaround']}</td>
+            <td>{proc['waiting']}</td>
+        </tr>
         """
-        
-        for proc in process_data:
-            pid = proc.get('pid', 0)
-            burst = proc.get('burst', 0)
-            turnaround = proc.get('turnaround', 0)
-            waiting = proc.get('waiting', 0)
-            
-            html_output += f"""
-            <tr>
-                <td>{pid}</td>
-                <td>{burst}</td>
-                <td>{turnaround}</td>
-                <td>{waiting}</td>
-            </tr>
-            <tr>
-                <td colspan="4">
-                    <div class="progress-container">
-                        <div class="progress-bar" style="width: {min(100, int(burst))}%;"></div>
-                    </div>
-                </td>
-            </tr>
-            """
-        
-        html_output += "</table>"
+    
+    html_output += "</table>"
+    
+    return html_output
+
+def generate_system_messages_html(system_messages):
+    """Generate HTML for system messages section."""
+    if not system_messages:
+        return "<p>No system messages</p>"
+    
+    html_output = ""
+    
+    for msg in system_messages:
+        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
+        html_output += f"""
+        <div class="system-message-box">
+            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
+            <p>{msg['message']}</p>
+        </div>
+        """
     
     return html_output
 
