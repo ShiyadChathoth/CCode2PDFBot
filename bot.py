@@ -382,11 +382,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     text-align: center;
                     margin-bottom: 20px;
                     text-decoration: underline;
+                    border-bottom: 3px
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
-                    font-size: 25px;
+                    font-size: 20px;
                     line-height: 1.3;
                     tab-size: 8;
                     -moz-tab-size: 8;
@@ -402,11 +403,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         </head>
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
-            
-            <h1><u><strong>SOURCE CODE</strong></u></h1>
             <pre><code>{html.escape(code)}</code></pre>
             
-            <h1><u><strong>OUTPUT</strong></u></h1>
+            <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
             <div class="terminal-view">
                 {reconstruct_terminal_view(context)}
             </div>
@@ -453,9 +452,9 @@ def reconstruct_terminal_view(context):
         <div style="
             font-family: 'Courier New', monospace;
             white-space: pre;
-            font-size: 12px;
+            font-size: 20px;
             line-height: 1.2;
-            background: #f8f8f8;
+            background: #FFFFFF;
             padding: 15px;
             border-radius: 5px;
             overflow-x: auto;
