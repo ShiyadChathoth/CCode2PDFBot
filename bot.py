@@ -513,6 +513,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     }}
                     .terminal {{ page-break-before: always; }}
                     h2 {{ page-break-before: always; }}
+                    
+                    /* Keep heading and table together */
+                    .table-container {{ 
+                        page-break-inside: avoid;
+                        break-inside: avoid;
+                    }}
                 }}
             </style>
         </head>
@@ -523,6 +529,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <pre class="source-code"><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
+            <div class="table-container">
             <pre class="terminal">"""
         
         # Combine all terminal log entries to create exact terminal output
@@ -553,7 +560,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                         processed_content = ""
                     
                 # Start a new HTML table with colgroup for fixed column widths
-                    html_content += '</pre><table class="terminal-table" style="border-collapse: collapse; width: 100%; background-color: #ffffff !important; background: #ffffff !important; border-spacing: 0;">'
+                    html_content += '</pre><div class="table-container"><table class="terminal-table" style="border-collapse: collapse; width: 100%; background-color: #ffffff !important; background: #ffffff !important; border-spacing: 0;">'
                     html_content += '<colgroup>'
                     html_content += '<col class="col-pid">'
                     html_content += '<col class="col-burst">'
@@ -602,6 +609,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     
                     # Close table and start normal terminal section
                     html_content += '</tbody></table><pre class="terminal">'
+                html_content += '</div>'
                 
                 # Add non-table line to regular content buffer
                 processed_content += line + '\n'
