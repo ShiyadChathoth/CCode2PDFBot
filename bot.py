@@ -228,12 +228,23 @@ async def read_process_output(update: Update, context: CallbackContext):
                     context.user_data['output_buffer'] = ""
                 
                 context.user_data['waiting_for_input'] = True
+                
+                # Get the last prompt from the execution log if available
+                last_prompt = "unknown"
+                for entry in reversed(execution_log):
+                    if entry['type'] == 'prompt':
+                        last_prompt = entry['message']
+                        break
+                
+                # Create a more informative message that includes the program's prompt
+                input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                
                 execution_log.append({
                     'type': 'system',
-                    'message': 'Program appears to be waiting for input. Please provide input (or type "done" to finish):',
+                    'message': input_message,
                     'timestamp': datetime.datetime.now()
                 })
-                await update.message.reply_text("Program appears to be waiting for input. Please provide input (or type 'done' to finish):")
+                await update.message.reply_text(input_message)
             
             continue
 
