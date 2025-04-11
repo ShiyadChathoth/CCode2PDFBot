@@ -397,7 +397,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-radius: 5px;
                 }}
                 .terminal-view {{
-                    margin: 15px 0;
+                    margin: 10px 0;
                 }}
             </style>
         </head>
@@ -455,8 +455,8 @@ def reconstruct_terminal_view(context):
             font-size: 20px;
             line-height: 1.2;
             background: #FFFFFF;
-            padding: 15px;
-            border-radius: 5px;
+            padding: 10px;
+            border-radius: 3px;
             overflow-x: auto;
         ">{html.escape(raw_output)}</div>
         """
