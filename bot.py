@@ -73,6 +73,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['execution_log'] = []  # Track full execution flow
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
     context.user_data['terminal_log'] = []  # Raw terminal output for exact formatting
+    context.user_data['program_completed'] = False  # Flag to track if program has completed
     
     try:
         with open("temp.c", "w") as file:
@@ -205,6 +206,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     
+                    # Mark program as completed
+                    context.user_data['program_completed'] = True
+                    
                     await update.message.reply_text("Program execution completed.")
                     
                     # Ask for program title before generating PDF
@@ -287,6 +291,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                 'timestamp': datetime.datetime.now()
             })
             
+            # Mark program as completed
+            context.user_data['program_completed'] = True
+            
             await update.message.reply_text("Program execution completed.")
             
             # Ask for program title before generating PDF
@@ -345,9 +352,17 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     execution_log = context.user_data['execution_log']
     terminal_log = context.user_data['terminal_log']
 
+    # Check if program has completed and we're waiting for title input
+    if context.user_data.get('program_completed', False):
+        return await handle_title_input(update, context)
+
     if not process or process.returncode is not None:
-        await update.message.reply_text("Program is not running anymore.")
-        return ConversationHandler.END
+        # If program has completed, treat this as title input
+        if context.user_data.get('program_completed', False):
+            return await handle_title_input(update, context)
+        else:
+            await update.message.reply_text("Program is not running anymore.")
+            return ConversationHandler.END
 
     if user_input.lower() == 'done':
         execution_log.append({
@@ -358,6 +373,9 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.stdin.drain()
         process.stdin.close()
         await process.wait()
+        
+        # Mark program as completed
+        context.user_data['program_completed'] = True
         
         # Ask for program title before generating PDF
         await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
@@ -513,7 +531,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <h1>Source Code</h1>
             <pre><code>{html.escape(code)}</code></pre>
             
-            <h1><u><b>OUTPUT</b></u></h1>
+            <h1>Terminal View</h1>
             <div class="terminal-view">
                 {terminal_view}
             </div>
