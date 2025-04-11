@@ -359,56 +359,76 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     else:
         context.user_data['program_title'] = title
     
-    # Create safe filename and store it
-    safe_filename = re.sub(r'[^\w\s-]', '', context.user_data['program_title']).strip().replace(' ', '_')
-    if not safe_filename:
-        safe_filename = "program_execution"
-    context.user_data['safe_filename'] = safe_filename
-    
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
-        # Get the safe filename from context
-        safe_filename = context.user_data.get('safe_filename', 'program_execution')
+        code = context.user_data['code']
+        execution_log = context.user_data['execution_log']
+        terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
-        
-        # Generate HTML (existing code)
+
+        # Generate HTML with proper tab alignment styling
         html_content = f"""
         <html>
-        <!-- Your existing HTML template -->
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .program-title {{
+                    font-size: 24px;
+                    font-weight: bold;
+                    text-align: center;
+                    margin-bottom: 20px;
+                }}
+                pre {{
+                    font-family: 'Courier New', monospace;
+                    white-space: pre;
+                    font-size: 12px;
+                    line-height: 1.3;
+                    tab-size: 8;
+                    -moz-tab-size: 8;
+                    -o-tab-size: 8;
+                    background: #f8f8f8;
+                    padding: 10px;
+                    border-radius: 5px;
+                }}
+                .terminal-view {{
+                    margin: 15px 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="program-title">{html.escape(program_title)}</div>
+            
+            <h2>Source Code</h2>
+            <pre><code>{html.escape(code)}</code></pre>
+            
+            <h2>Terminal Output</h2>
+            <div class="terminal-view">
+                {reconstruct_terminal_view(context)}
+            </div>
+        </body>
         </html>
         """
-        
-        # Save HTML with title-based filename
-        html_filename = f"{safe_filename}.html"
-        with open(html_filename, "w") as file:
+
+        with open("output.html", "w") as file:
             file.write(html_content)
-        
-        # Generate PDF with title-based filename
-        pdf_filename = f"{safe_filename}.pdf"
-        subprocess.run(["wkhtmltopdf", html_filename, pdf_filename])
-        
-        # Send PDF with title-based filename
+
+        # Generate PDF
+        pdf_filename = "output.pdf"
+        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+
+        # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
                 filename=pdf_filename,
-                caption=f"Execution report: {program_title}"
+                caption=f"Execution report for {program_title}"
             )
-        
-        # Optionally send HTML file too
-        with open(html_filename, 'rb') as html_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=html_file,
-                filename=html_filename,
-                caption="HTML version for reference"
-            )
-            
+
     except Exception as e:
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
@@ -474,18 +494,21 @@ def generate_system_messages_html(system_messages):
     return html_output
 
 async def cleanup(context: CallbackContext):
-    # Get the safe filename if it exists
-    safe_filename = context.user_data.get('safe_filename', None)
+    process = context.user_data.get('process')
+    if process and process.returncode is None:
+        process.terminate()
+        try:
+            await process.wait()
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
     
-    # Clean up files
-    files_to_remove = ["temp.c", "temp"]
-    if safe_filename:
-        files_to_remove.extend([f"{safe_filename}.html", f"{safe_filename}.pdf"])
-    else:
-        files_to_remove.extend(["output.html", "program_execution.pdf"])
-    
-    for file in files_to_remove:
+    for file in ["temp.c", "temp", "output.html"]:
         if os.path.exists(file):
+            os.remove(file)
+    
+    for file in os.listdir():
+        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
             os.remove(file)
     
     context.user_data.clear()
