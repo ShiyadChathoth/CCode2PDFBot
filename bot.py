@@ -1,3 +1,4 @@
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -170,10 +171,6 @@ async def read_process_output(update: Update, context: CallbackContext):
     # Use a smaller read size to capture output more frequently
     read_size = 1024
     
-    # Buffer to collect table-like output
-    table_buffer = []
-    in_table = False
-    
     while True:
         # Read stdout and stderr in chunks rather than lines
         stdout_task = asyncio.create_task(process.stdout.read(read_size))
@@ -197,16 +194,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                 # If there's any remaining data in the buffer, process it
                 if output_buffer:
                     # Process any remaining buffered output
-                    process_output_chunk(context, output_buffer, update, table_buffer, in_table)
+                    process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
-                
-                # If we have collected table data, send it now
-                if table_buffer:
-                    table_text = "```\n" + "\n".join(table_buffer) + "\n```"
-                    await update.message.reply_text(table_text, parse_mode='Markdown')
-                    table_buffer = []
-                    in_table = False
                 
                 if output_seen:
                     # Only send completion message if we've seen some output
@@ -228,16 +218,9 @@ async def read_process_output(update: Update, context: CallbackContext):
             if output_seen and not context.user_data.get('waiting_for_input', False):
                 # Process any buffered output before prompting for input
                 if output_buffer:
-                    process_output_chunk(context, output_buffer, update, table_buffer, in_table)
+                    process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
-                
-                # If we have collected table data, send it now
-                if table_buffer:
-                    table_text = "```\n" + "\n".join(table_buffer) + "\n```"
-                    await update.message.reply_text(table_text, parse_mode='Markdown')
-                    table_buffer = []
-                    in_table = False
                 
                 context.user_data['waiting_for_input'] = True
                 execution_log.append({
@@ -264,7 +247,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                 context.user_data['output_buffer'] = output_buffer
                 
                 # Process the buffer
-                output_buffer, in_table = process_output_chunk(context, output_buffer, update, table_buffer, in_table)
+                output_buffer = process_output_chunk(context, output_buffer, update)
                 context.user_data['output_buffer'] = output_buffer
 
         # Handle stderr (errors)
@@ -295,12 +278,7 @@ async def read_process_output(update: Update, context: CallbackContext):
         if process.returncode is not None:
             # Process any remaining buffered output
             if output_buffer:
-                process_output_chunk(context, output_buffer, update, table_buffer, in_table)
-            
-            # If we have collected table data, send it now
-            if table_buffer:
-                table_text = "```\n" + "\n".join(table_buffer) + "\n```"
-                await update.message.reply_text(table_text, parse_mode='Markdown')
+                process_output_chunk(context, output_buffer, update)
             
             execution_log.append({
                 'type': 'system',
@@ -312,7 +290,7 @@ async def read_process_output(update: Update, context: CallbackContext):
             await generate_and_send_pdf(update, context)
             break
 
-def process_output_chunk(context, buffer, update, table_buffer, in_table):
+def process_output_chunk(context, buffer, update):
     """Process the output buffer, extracting complete lines and preserving partial lines."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
@@ -342,14 +320,6 @@ def process_output_chunk(context, buffer, update, table_buffer, in_table):
                 "number" in line_stripped.lower()
             )
             
-            # Simple table detection
-            is_table = False
-            if ("PID" in line_stripped and "Burst Time" in line_stripped) or \
-               ("Process" in line_stripped and "execution order" in line_stripped) or \
-               re.search(r'\d+\s+\d+\s+\d+', line_stripped):
-                is_table = True
-                in_table = True
-            
             # Add to execution log with appropriate type
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
@@ -360,22 +330,11 @@ def process_output_chunk(context, buffer, update, table_buffer, in_table):
             
             execution_log.append(log_entry)
             
-            # Handle table content
-            if in_table:
-                table_buffer.append(line_stripped)
-                # If this is a prompt, we need to send the table and then the prompt
-                if is_prompt:
-                    asyncio.create_task(update.message.reply_text("```\n" + "\n".join(table_buffer) + "\n```", parse_mode='Markdown'))
-                    table_buffer.clear()
-                    in_table = False
-                    # Now send the prompt separately
-                    asyncio.create_task(update.message.reply_text(f"Program prompt: {line_stripped}"))
-            else:
-                # Display to user with appropriate prefix
-                prefix = "Program prompt:" if is_prompt else "Program output:"
-                asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
+            # Display to user with appropriate prefix
+            prefix = "Program prompt:" if is_prompt else "Program output:"
+            asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
     
-    return new_buffer, in_table
+    return new_buffer
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
@@ -640,3 +599,10 @@ def main() -> None:
         logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
         print("Error: Another instance of this bot is already running. Please stop it and try again.")
         return
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise
+
+if __name__ == '__main__':
+    main()
+
