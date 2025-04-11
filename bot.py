@@ -432,9 +432,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre; 
                     line-height: 1.5;
                     margin: 0;
-                    tab-size: 8;
-                    -moz-tab-size: 8;
-                    -o-tab-size: 8;
+                    tab-size: 12;
+                    -moz-tab-size: 12;
+                    -o-tab-size: 12;
                     padding: 15px;
                     background-color: #f8f9fa;
                     border-radius: 5px;
