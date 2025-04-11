@@ -409,18 +409,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     letter-spacing: 2px; 
                 }}
                 
-                pre {{
-                    font-family: monospace;
-                    white-space: pre;
-                    margin: 1em 0;
-                    line-height: 1.5;
-                    font-size: 14px;
-                    background-color: #f5f5f5;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border: 1px solid #ddd;
-                    overflow-x: auto;
-                }}
+        pre {
+    font-family: 'Courier New', monospace;
+    white-space: pre;
+    font-size: 12px;
+    line-height: 1.3;
+    tab-size: 8;
+    margin: 0;
+    padding: 10px;
+    background: #f8f8f8;
+}
                 
                 .terminal-view {{ 
                     font-family: monospace;
@@ -513,18 +511,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await cleanup(context)
 
 def reconstruct_terminal_view(context):
-    """Reconstruct the terminal view from execution log, preserving tabs and whitespace."""
-    execution_log = context.user_data['execution_log']
+    """Preserve tab alignment exactly as in terminal output"""
     terminal_log = context.user_data.get('terminal_log', [])
     
-    # If we have raw terminal output, use that directly
     if terminal_log:
         raw_output = ''.join(terminal_log)
-        # Convert tabs to spaces for consistent display (4 spaces per tab)
-        raw_output = raw_output.replace('\t', '    ')
-        # Preserve all whitespace and newlines
-        formatted_output = f"<pre>{html.escape(raw_output)}</pre>"
-        return formatted_output
+        # Convert tabs to 8 spaces for perfect PDF alignment
+        raw_output = raw_output.expandtabs(8)
+        return f"<pre style='font-family: Courier New; white-space: pre;'>{html.escape(raw_output)}</pre>"
+    
+    return "<pre>No terminal output</pre>"
     
     # Otherwise try to reconstruct from execution log
     if execution_log:
