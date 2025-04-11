@@ -73,6 +73,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['execution_log'] = []  # Track full execution flow
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
     context.user_data['terminal_log'] = []  # Raw terminal output for exact formatting
+    context.user_data['table_mode'] = False  # Flag to indicate if we're in table mode
+    context.user_data['table_buffer'] = []   # Buffer to collect table lines
     
     try:
         with open("temp.c", "w") as file:
@@ -197,6 +199,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
                 
+                # If we're in table mode, send the collected table
+                if context.user_data.get('table_mode', False) and context.user_data.get('table_buffer', []):
+                    await send_table(update, context)
+                
                 if output_seen:
                     # Only send completion message if we've seen some output
                     execution_log.append({
@@ -220,6 +226,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                     process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
+                
+                # If we're in table mode, send the collected table
+                if context.user_data.get('table_mode', False) and context.user_data.get('table_buffer', []):
+                    await send_table(update, context)
                 
                 context.user_data['waiting_for_input'] = True
                 execution_log.append({
@@ -279,6 +289,10 @@ async def read_process_output(update: Update, context: CallbackContext):
             if output_buffer:
                 process_output_chunk(context, output_buffer, update)
             
+            # If we're in table mode, send the collected table
+            if context.user_data.get('table_mode', False) and context.user_data.get('table_buffer', []):
+                await send_table(update, context)
+            
             execution_log.append({
                 'type': 'system',
                 'message': 'Program execution completed.',
@@ -303,6 +317,9 @@ def process_output_chunk(context, buffer, update):
         new_buffer = lines[-1]
         lines = lines[:-1]
     
+    # Check for table headers or table-like content
+    table_indicators = ["PID", "Burst Time", "Turnaround Time", "Waiting Time", "Process", "execution order"]
+    
     # Process each complete line
     for line in lines:
         line_stripped = line.strip()
@@ -319,6 +336,18 @@ def process_output_chunk(context, buffer, update):
                 "number" in line_stripped.lower()
             )
             
+            # Check if this line might be part of a table
+            is_table_content = False
+            for indicator in table_indicators:
+                if indicator in line_stripped:
+                    is_table_content = True
+                    break
+            
+            # Also check if line contains multiple numbers with spaces/tabs between them
+            # which is typical of table data
+            if re.search(r'\d+\s+\d+\s+\d+', line_stripped):
+                is_table_content = True
+            
             # Add to execution log with appropriate type
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
@@ -329,11 +358,48 @@ def process_output_chunk(context, buffer, update):
             
             execution_log.append(log_entry)
             
-            # Display to user with appropriate prefix
-            prefix = "Program prompt:" if is_prompt else "Program output:"
-            asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
+            # Handle table content differently
+            if is_table_content:
+                # If we're not already in table mode, start collecting table lines
+                if not context.user_data.get('table_mode', False):
+                    context.user_data['table_mode'] = True
+                    context.user_data['table_buffer'] = []
+                
+                # Add this line to the table buffer
+                context.user_data['table_buffer'].append(line_stripped)
+                
+                # If this is a prompt, we need to send the table and then the prompt
+                if is_prompt:
+                    asyncio.create_task(send_table(update, context))
+                    # Now send the prompt separately
+                    asyncio.create_task(update.message.reply_text(f"Program prompt: {line_stripped}"))
+            else:
+                # If we were in table mode but this line is not table content,
+                # send the collected table and exit table mode
+                if context.user_data.get('table_mode', False) and context.user_data.get('table_buffer', []):
+                    asyncio.create_task(send_table(update, context))
+                
+                # Display to user with appropriate prefix
+                prefix = "Program prompt:" if is_prompt else "Program output:"
+                asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
     
     return new_buffer
+
+async def send_table(update, context):
+    """Send the collected table as a monospace code block to preserve alignment."""
+    table_buffer = context.user_data.get('table_buffer', [])
+    if not table_buffer:
+        return
+    
+    # Join all table lines with newlines and wrap in a code block
+    table_text = "```\n" + "\n".join(table_buffer) + "\n```"
+    
+    # Send the table as a monospace code block
+    await update.message.reply_text(table_text, parse_mode='Markdown')
+    
+    # Clear the table buffer and reset table mode
+    context.user_data['table_buffer'] = []
+    context.user_data['table_mode'] = False
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
@@ -598,9 +664,4 @@ def main() -> None:
         logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
         print("Error: Another instance of this bot is already running. Please stop it and try again.")
         return
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise
 
-if __name__ == '__main__':
-    main()
