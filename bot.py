@@ -387,63 +387,232 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
         
-        # Extract program inputs, outputs, and prompts
-        inputs = [entry for entry in execution_log if entry['type'] == 'input']
-        outputs = [entry for entry in execution_log if entry['type'] == 'output']
-        prompts = [entry for entry in execution_log if entry['type'] == 'prompt']
-        errors = [entry for entry in execution_log if entry['type'] == 'error']
+        # Filter execution log to keep only compilation success and program completion messages
+        filtered_execution_log = [
+            entry for entry in execution_log 
+            if entry['type'] == 'system' and (
+                entry['message'].startswith('Code compiled successfully') or 
+                entry['message'] == 'Program execution completed.'
+            )
+        ]
         
-        # Extract process data from execution log
-        process_data = extract_process_data_from_log(execution_log)
-        
-        # Get system messages
-        system_messages = [entry for entry in execution_log if entry['type'] == 'system']
-        
-        # Generate HTML content for the PDF with clean terminal view
+        # Create HTML report
         html_content = f"""
+        <!DOCTYPE html>
         <html>
         <head>
+            <meta charset="UTF-8">
+            <title>C Program Execution Report</title>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #333; }}
-                pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
-                .code-block {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; font-family: monospace; }}
-                .terminal-view {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; font-family: monospace; }}
-                .system-message {{ color: #0066cc; }}
-                .input {{ color: #009900; }}
-                .output {{ color: #000000; }}
-                .prompt {{ color: #990000; }}
-                .error {{ color: #cc0000; }}
-                table {{ border-collapse: collapse; width: 100%; margin: 15px 0; }}
-                th, td {{ padding: 8px; text-align: left; }}
-                .process-table {{ width: 100%; }}
-                .process-table th {{ background-color: #f2f2f2; padding: 8px; text-align: left; }}
-                .process-table td {{ padding: 8px; text-align: left; }}
-                .process-row {{ background-color: #f9f9f9; }}
-                .system-messages {{ margin-top: 20px; }}
-                .system-message-box {{ background-color: #f9f9f9; padding: 10px; margin: 5px 0; }}
-                .timestamp {{ color: #666; font-size: 0.9em; }}
-                .divider {{ border-top: 1px solid #ddd; margin: 20px 0; }}
-                h2 {{ color: #4b8bf4; font-size: 1.2em; margin-top: 20px; }}
+                h1, h2 {{ color: #000000; }}
+                .source-code {{ 
+                    background-color: #ffffff; 
+                    padding: 10px; 
+                    border: 1px solid #000000; 
+                    border-radius: 5px; 
+                    overflow-x: auto;
+                    max-height: 400px;
+                    overflow-y: auto;
+                    white-space: pre;
+                    font-family: 'Courier New', monospace;
+                }}
+                .terminal {{ 
+                    background-color: #ffffff; 
+                    color: #000000; 
+                    padding: 10px; 
+                    border: 1px solid #000000; 
+                    border-radius: 5px; 
+                    white-space: pre-wrap;
+                    font-family: 'Courier New', monospace;
+                    tab-size: 16;
+                    -moz-tab-size: 16;
+                    -o-tab-size: 16;
+                    letter-spacing: 0;
+                    word-spacing: 0;
+                    font-size: 14px;
+                    font-variant-ligatures: none;
+                }}
+                .execution-flow {{ margin-top: 20px; }}
+                .terminal-table {{ 
+                    font-family: 'Courier New', monospace;
+                    border-collapse: collapse;
+                    width: 100%;
+                    border: none;
+                    border-bottom: none;
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                    color: #000000;
+                }}
+                .system {{ background-color: #ffffff; padding: 10px; border-left: 4px solid #000000; margin: 10px 0; white-space: pre-wrap; }}
+                .timestamp {{ color: #000000; font-size: 0.8em; }}
+                
+                @media print {{
+                    .source-code {{ 
+                        page-break-inside: avoid;
+                        max-height: none; /* Remove height limit for printing */
+                    }}
+                    .terminal {{ page-break-before: always; }}
+                    h2 {{ page-break-before: always; }}
+                    
+                    /* Enhanced table page break prevention */
+                    .terminal-table {{ 
+                        page-break-inside: avoid !important;
+                        break-inside: avoid !important;
+                        page-break-before: auto !important;
+                        page-break-after: auto !important;
+                    }}
+                    
+                    /* Force table to move to next page if it doesn't fit */
+                    table.terminal-table {{
+                        orphans: 2147483647 !important;
+                        widows: 2147483647 !important;
+                    }}
+                    
+                    /* Ensure table headers stay with their data */
+                    table.terminal-table thead {{
+                        display: table-header-group !important;
+                    }}
+                    
+                    /* Ensure table body stays together */
+                    table.terminal-table tbody {{
+                        display: table-row-group !important;
+                    }}
+                }}
             </style>
         </head>
         <body>
-            <h1>Source Code</h1>
-            <div class="code-block">
-                <pre><code>{html.escape(code)}</code></pre>
-            </div>
+            <h1>C Program Execution Report</h1>
             
-            <h1 style="color: #4b8bf4;">Terminal View</h1>
-            <div class="terminal-view">
-                {generate_clean_terminal_view(context)}
-            </div>
+            <h2>Source Code</h2>
+            <pre class="source-code"><code>{html.escape(code)}</code></pre>
             
-            <div class="divider"></div>
+            <h2>Terminal View</h2>
+            <pre class="terminal">"""
+        
+        # Combine all terminal log entries to create exact terminal output
+        terminal_content = ""
+        for entry in terminal_log:
+            terminal_content += entry
+        
+        # Process terminal content to detect and convert table-like structures to HTML tables
+        processed_content = ""
+        lines = terminal_content.split('\n')
+        in_table = False
+        table_buffer = []
+        table_header = []
+        
+        for line in lines:
+            # Detect table headers or rows by checking for multiple spaces or tabs between words
+            # Common patterns in FCFS tables like "PID Burst Time Turnaround Time waiting Time"
+            is_table_header = bool('PID' in line and ('Burst Time' in line or 'Turnaround Time' in line or 'waiting Time' in line))
+            is_table_row = bool(re.match(r'^\s*\d+\s+\d+\s+\d+\s+\d+\s*$', line) or 
+                              (re.search(r'\S+\s{2,}\S+', line) and not is_table_header))
             
+            if is_table_header or is_table_row:
+                if not in_table:
+                    in_table = True
+                    # If starting a new table, add any previous content
+                    if processed_content:
+                        html_content += html.escape(processed_content)
+                        processed_content = ""
+                    
+                # Start a new HTML table with colgroup for fixed column widths
+                    html_content += '</pre><table class="terminal-table" style="border-collapse: collapse; width: 100%; background-color: #ffffff !important; background: #ffffff !important; border-spacing: 0; page-break-inside: avoid !important; break-inside: avoid !important;">'
+                    html_content += '<colgroup>'
+                    html_content += '<col class="col-pid">'
+                    html_content += '<col class="col-burst">'
+                    html_content += '<col class="col-turnaround">'
+                    html_content += '<col class="col-waiting">'
+                    html_content += '</colgroup>'
+                    
+                    # If this is a header row, process it specially
+                    if is_table_header:
+                        # For FCFS tables, use fixed column headers to ensure alignment
+                        html_content += '<thead><tr style="background-color: #ffffff !important; background: #ffffff !important;">'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: #ffffff !important; background: #ffffff !important; color: #000000;">PID</th>'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: #ffffff !important; background: #ffffff !important; color: #000000;">Burst Time</th>'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: #ffffff !important; background: #ffffff !important; color: #000000;">Turnaround Time</th>'
+                        html_content += '<th style="text-align: left; padding: 0 8px; font-weight: normal; background-color: #ffffff !important; background: #ffffff !important; color: #000000;">waiting Time</th>'
+                        html_content += '</tr></thead><tbody>'
+                        table_header = ['PID', 'Burst Time', 'Turnaround Time', 'waiting Time']
+                        continue  # Skip adding this line to the table buffer
+                
+                # For data rows, add to table buffer
+                if is_table_row:
+                    table_buffer.append(line.strip())
+            else:
+                if in_table:
+                    in_table = False
+                    # Process and add the table content as HTML table rows
+                    if table_buffer:
+                        for row in table_buffer:
+                            # For FCFS tables, ensure consistent column count
+                            # Split the row by any whitespace
+                            cells = re.split(r'\s+', row.strip())
+                            
+                            # Ensure we have exactly 4 cells
+                            while len(cells) < 4:
+                                cells.append("")
+                            
+                            # Only use the first 4 cells
+                            if len(cells) > 4:
+                                cells = cells[:4]
+                                
+                            html_content += '<tr style="background-color: #ffffff !important; background: #ffffff !important;">'
+                            for cell in cells:
+                                html_content += f'<td style="text-align: left; padding: 0 8px; font-weight: normal; background-color: #ffffff !important; background: #ffffff !important; color: #000000;">{html.escape(cell.strip())}</td>'
+                            html_content += '</tr>'
+                        table_buffer = []
+                    
+                    # Close table and start normal terminal section
+                    html_content += '</tbody></table><pre class="terminal">'
+                
+                # Add non-table line to regular content buffer
+                processed_content += line + '\n'
+        
+        # Handle any remaining content
+        if in_table and table_buffer:
+            # Process any remaining table rows
+            for row in table_buffer:
+                # Split the row by any whitespace
+                cells = re.split(r'\s+', row.strip())
+                
+                # Ensure we have exactly 4 cells
+                while len(cells) < 4:
+                    cells.append("")
+                
+                # Only use the first 4 cells
+                if len(cells) > 4:
+                    cells = cells[:4]
+                    
+                html_content += '<tr style="background-color: #ffffff !important; background: #ffffff !important;">'
+                for cell in cells:
+                    html_content += f'<td style="text-align: left; padding: 0 8px; font-weight: normal; background-color: #ffffff !important; background: #ffffff !important; color: #000000;">{html.escape(cell.strip())}</td>'
+                html_content += '</tr>'
+            html_content += '</tbody></table>'
+        elif processed_content:
+            html_content += html.escape(processed_content)
+        
+        html_content += """</pre>
+        """
+        
+        # Add only the system messages for compilation success and program completion
+        if filtered_execution_log:
+            html_content += """
             <h2>System Messages</h2>
-            <div class="system-messages">
-                {generate_system_messages_html(system_messages)}
+            <div class="execution-flow">
+            """
+            
+            for entry in filtered_execution_log:
+                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
+            
+            html_content += """
             </div>
+            """
+        
+        html_content += """
         </body>
         </html>
         """
@@ -451,178 +620,76 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
         
-        # Check if wkhtmltopdf is installed
-        try:
-            subprocess.run(["which", "wkhtmltopdf"], check=True, capture_output=True)
-        except subprocess.CalledProcessError:
-            # Install wkhtmltopdf if not available
-            await update.message.reply_text("Installing PDF generation tool...")
-            subprocess.run(["apt-get", "update"], check=True)
-            subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], check=True)
+        # Generate PDF with wkhtmltopdf with specific options for better layout
+        pdf_process = subprocess.run(
+            [
+                "wkhtmltopdf",
+                "--enable-local-file-access",
+                "--page-size", "A4",
+                "--margin-top", "10mm",
+                "--margin-bottom", "10mm",
+                "--margin-left", "10mm",
+                "--margin-right", "10mm",
+                "--disable-smart-shrinking",  # Prevents unexpected scaling
+                "output.html",
+                "output.pdf"
+            ],
+            capture_output=True,
+            text=True
+        )
         
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", "output.pdf"])
+        if pdf_process.returncode != 0:
+            logger.error(f"PDF generation failed: {pdf_process.stderr}")
+            await update.message.reply_text("Failed to generate PDF report. Sending HTML instead.")
+            with open('output.html', 'rb') as html_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id, 
+                    document=html_file,
+                    filename="program_execution.html"
+                )
+        else:
+            # Send both PDF and HTML for maximum compatibility
+            await update.message.reply_text("Generating execution report...")
+            with open('output.pdf', 'rb') as pdf_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id, 
+                    document=pdf_file,
+                    filename="program_execution.pdf"
+                )
+            
+            with open('output.html', 'rb') as html_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id, 
+                    document=html_file,
+                    filename="program_execution.html"
+                )
         
-        # Send PDF to user
-        with open('output.pdf', 'rb') as pdf_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=pdf_file,
-                filename="program_execution.pdf",
-                caption="Here's the execution report of your C code."
-            )
-        
-        # Also send HTML file for better viewing
-        with open('output.html', 'rb') as html_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=html_file,
-                filename="program_execution.html",
-                caption="HTML version of the execution report for better viewing."
-            )
     except Exception as e:
-        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
+        logger.error(f"Error in PDF generation: {str(e)}")
+        await update.message.reply_text(f"Failed to generate report: {str(e)}")
     finally:
         await cleanup(context)
-
-def generate_clean_terminal_view(context):
-    """Generate a clean terminal view with proper alignment based on execution log."""
-    execution_log = context.user_data['execution_log']
-    
-    # Extract process data
-    process_data = extract_process_data_from_log(execution_log)
-    
-    if not process_data:
-        return "<p>No process data available</p>"
-    
-    # Generate the terminal view HTML
-    html_output = ""
-    
-    # First, add the process input section
-    num_processes = len(process_data)
-    html_output += f"<p>Enter the no.of process: {num_processes}</p>"
-    
-    for i, proc in enumerate(process_data):
-        html_output += f"<p>Enter the Burst time of process {i} : {proc['burst']}</p>"
-    
-    # Add order of execution
-    html_output += "<p>Order of execution:</p>"
-    execution_order = "P0"
-    for i in range(1, num_processes):
-        execution_order += f"->P{i}"
-    html_output += f"<p>{execution_order}</p>"
-    
-    # Add the process table header
-    html_output += """
-    <table class="process-table">
-        <tr>
-            <th style="width: 15%;">PID</th>
-            <th style="width: 25%;">Burst Time</th>
-            <th style="width: 30%;">Turnaround Time</th>
-            <th style="width: 30%;">Waiting Time</th>
-        </tr>
-    """
-    
-    # Add each process row
-    for proc in process_data:
-        html_output += f"""
-        <tr class="process-row">
-            <td>{proc['pid']}</td>
-            <td>{proc['burst']}</td>
-            <td>{proc['turnaround']}</td>
-            <td>{proc['waiting']}</td>
-        </tr>
-        """
-    
-    html_output += "</table>"
-    
-    return html_output
-
-def generate_system_messages_html(system_messages):
-    """Generate HTML for system messages section."""
-    if not system_messages:
-        return "<p>No system messages</p>"
-    
-    html_output = ""
-    
-    for msg in system_messages:
-        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
-        html_output += f"""
-        <div class="system-message-box">
-            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
-            <p>{msg['message']}</p>
-        </div>
-        """
-    
-    return html_output
-
-def extract_process_data_from_log(execution_log):
-    """Extract process scheduling data from execution log if available."""
-    processes = []
-    
-    # Look for patterns in output that might indicate process data
-    pid_pattern = re.compile(r'Enter the Burst time of process (\d+)\s*:\s*(\d+)')
-    
-    for entry in execution_log:
-        if entry['type'] == 'output' or entry['type'] == 'prompt':
-            match = pid_pattern.search(entry['message'])
-            if match:
-                pid = int(match.group(1))
-                burst = int(match.group(2))
-                
-                # Check if this process is already in our list
-                existing = next((p for p in processes if p['pid'] == pid), None)
-                if existing:
-                    existing['burst'] = burst
-                else:
-                    processes.append({
-                        'pid': pid,
-                        'burst': burst,
-                        'turnaround': 0,
-                        'waiting': 0
-                    })
-    
-    # If we found processes, try to extract turnaround and waiting times
-    if processes:
-        # Sort by PID
-        processes.sort(key=lambda x: x['pid'])
-        
-        # Look for turnaround and waiting time patterns
-        for entry in execution_log:
-            if entry['type'] == 'output':
-                # Try to match lines like "0       21      21      0"
-                parts = entry['message'].strip().split()
-                if len(parts) == 4:
-                    try:
-                        pid = int(parts[0])
-                        burst = int(parts[1])
-                        turnaround = int(parts[2])
-                        waiting = int(parts[3])
-                        
-                        # Find the process with this PID
-                        proc = next((p for p in processes if p['pid'] == pid), None)
-                        if proc:
-                            proc['burst'] = burst
-                            proc['turnaround'] = turnaround
-                            proc['waiting'] = waiting
-                    except (ValueError, IndexError):
-                        pass
-    
-    return processes
 
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
     if process and process.returncode is None:
-        process.terminate()
         try:
-            await process.wait()
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        except Exception as e:
+            logger.error(f"Error during process cleanup: {str(e)}")
     
+    # Clean up temporary files
     for file in ["temp.c", "temp", "output.pdf", "output.html"]:
         if os.path.exists(file):
-            os.remove(file)
+            try:
+                os.remove(file)
+            except Exception as e:
+                logger.error(f"Error removing file {file}: {str(e)}")
     
     context.user_data.clear()
 
@@ -652,6 +719,7 @@ def main() -> None:
         # Log startup and start polling
         logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
+        
     except telegram.error.Conflict as e:
         logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
         print("Error: Another instance of this bot is already running. Please stop it and try again.")
