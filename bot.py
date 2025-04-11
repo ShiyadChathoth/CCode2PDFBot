@@ -432,12 +432,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre; 
                     line-height: 1.5;
                     margin: 0;
-                    tab-size: 12;
-                    -moz-tab-size: 12;
-                    -o-tab-size: 12;
+                    tab-size: 16;
+                    -moz-tab-size: 16;
+                    -o-tab-size: 16;
                     padding: 15px;
                     background-color: #f8f9fa;
                     border-radius: 5px;
+                    letter-spacing: 0;
+                    word-spacing: 0;
+                    font-size: 14px;
+                    font-variant-ligatures: none;
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
