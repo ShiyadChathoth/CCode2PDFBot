@@ -701,26 +701,58 @@ def reconstruct_terminal_view(context):
             execution_order += f"->P{i}"
         html_output += f"<p>{execution_order}-></p>"
         
-        # Use a pre-formatted text approach with monospace font and consistent spacing
+        # Create a fixed-width table using HTML table with precise column widths
         html_output += """
-        <div style="font-family: monospace; white-space: pre; font-size: 16px; line-height: 1.5; background-color: #f5f5f5; padding: 15px; border-radius: 8px;">
-<span style="font-weight: bold;">PID  Burst Time  Turnaround Time  Waiting Time</span>"""
-        
-        # Add each process row with consistent spacing
-        for proc in process_data:
-            pid_str = str(proc['pid']).ljust(4)
-            burst_str = str(proc['burst']).ljust(11)
-            turnaround_str = str(proc['turnaround']).ljust(16)
-            waiting_str = str(proc['waiting'])
-            
-            html_output += f"""
-{pid_str}{burst_str}{turnaround_str}{waiting_str}"""
-        
-        html_output += """
-        </div>
+        <style>
+            .fixed-table {
+                font-family: monospace;
+                font-size: 16px;
+                border-collapse: collapse;
+                width: 100%;
+                table-layout: fixed;
+            }
+            .fixed-table th, .fixed-table td {
+                text-align: left;
+                padding: 8px;
+                border-bottom: 1px solid #ddd;
+            }
+            .fixed-table th {
+                background-color: #f2f2f2;
+                font-weight: bold;
+            }
+            .fixed-table tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            .col1 { width: 10%; }
+            .col2 { width: 20%; }
+            .col3 { width: 35%; }
+            .col4 { width: 35%; }
+        </style>
+        <table class="fixed-table">
+            <tr>
+                <th class="col1">PID</th>
+                <th class="col2">Burst Time</th>
+                <th class="col3">Turnaround Time</th>
+                <th class="col4">Waiting Time</th>
+            </tr>
         """
         
-        # No closing table tag needed with the new approach
+        # Add each process row with proper column classes
+        for proc in process_data:
+            html_output += f"""
+            <tr>
+                <td class="col1">{proc['pid']}</td>
+                <td class="col2">{proc['burst']}</td>
+                <td class="col3">{proc['turnaround']}</td>
+                <td class="col4">{proc['waiting']}</td>
+            </tr>
+            """
+        
+        html_output += """
+        </table>
+        """
+        
+        # Remove this comment as we're now using a proper table with closing tag
         
         return html_output
     
@@ -928,4 +960,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
