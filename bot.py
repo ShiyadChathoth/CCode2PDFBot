@@ -450,65 +450,46 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <head>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #333; }}
+                h1 {{ color: #333; font-size: 28px; margin-top: 30px; margin-bottom: 15px; }}
+                
+                /* Enhanced title styling */
                 .program-title {{ 
-                    font-size: 32px; /* Increased from 24px */
-                    font-weight: bold; /* Added bold */
+                    font-size: 36px; /* Increased from 24px */
+                    font-weight: bold; 
                     color: #0066cc; 
-                    margin-bottom: 15px; /* Increased from 5px */
+                    margin: 20px 0 30px 0;
                     text-align: center;
-                    padding: 15px; /* Increased from 10px */
-                    background-color: #f0f8ff; /* Lighter blue background */
-                    border-radius: 8px; /* Increased from 5px */
-                    border: 2px solid #0066cc; /* Added border */
-                    box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* Added shadow */
-                    text-transform: uppercase; /* Added uppercase */
-                    letter-spacing: 1px; /* Added letter spacing */
-                }}
-                pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
-                .terminal {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; font-family: monospace; }}
-                .system-message {{ color: #0066cc; }}
-                .input {{ color: #009900; }}
-                .output {{ color: #000000; }}
-                .prompt {{ color: #990000; }}
-                .error {{ color: #cc0000; }}
-                
-                /* Modified table styles to remove borders between rows */
-                table {{ 
-                    border-collapse: collapse; 
-                    width: 100%; 
-                    margin: 15px 0; 
-                    border: none; 
+                    padding: 20px; 
+                    background-color: #f0f8ff; 
+                    border-radius: 10px; 
+                    border: 3px solid #0066cc; 
+                    box-shadow: 0 6px 12px rgba(0,0,0,0.15); 
+                    text-transform: uppercase; 
+                    letter-spacing: 2px; 
                 }}
                 
-                th {{ 
-                    background-color: #f2f2f2; 
-                    padding: 8px; 
-                    text-align: left; 
-                    border: none; 
-                }}
-                
-                td {{ 
-                    padding: 8px; 
-                    text-align: left; 
-                    border: none; 
-                }}
-                
-                /* Add subtle background to alternate rows for readability */
-                tr:nth-child(even) {{ 
-                    background-color: #f9f9f9; 
-                }}
-                
-                /* Remove progress bars completely */
-                .progress-container, .progress-bar {{ 
-                    display: none; 
-                }}
-                
-                .terminal-view {{ 
+                /* Increased C program code text size */
+                pre code {{ 
+                    font-size: 16px; /* Increased from default */
+                    line-height: 1.5;
                     background-color: #f5f5f5; 
                     padding: 15px; 
-                    border-radius: 5px; 
+                    border-radius: 8px; 
+                    overflow-x: auto;
+                    display: block;
+                    border: 1px solid #ddd;
+                }}
+                
+                /* Increased terminal output text size */
+                .terminal-view {{ 
+                    font-size: 16px; /* Increased from default */
+                    line-height: 1.5;
+                    background-color: #f5f5f5; 
+                    padding: 15px; 
+                    border-radius: 8px; 
                     font-family: monospace; 
+                    border: 1px solid #ddd;
+                    margin-bottom: 20px;
                 }}
                 
                 .system-messages {{ 
@@ -519,14 +500,47 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 
                 .system-message-box {{ 
                     background-color: #f9f9f9; 
-                    padding: 10px; 
-                    margin: 5px 0; 
-                    border-left: 3px solid #0066cc; 
+                    padding: 15px; 
+                    margin: 10px 0; 
+                    border-left: 4px solid #0066cc; 
+                    font-size: 15px;
                 }}
                 
                 .timestamp {{ 
                     color: #666; 
                     font-size: 0.9em; 
+                }}
+                
+                /* Remove progress bars completely */
+                .progress-container, .progress-bar {{ 
+                    display: none; 
+                }}
+                
+                /* Table styling */
+                table {{ 
+                    border-collapse: collapse; 
+                    width: 100%; 
+                    margin: 15px 0; 
+                    border: none; 
+                    font-size: 15px;
+                }}
+                
+                th {{ 
+                    background-color: #f2f2f2; 
+                    padding: 12px; 
+                    text-align: left; 
+                    border: none; 
+                    font-weight: bold;
+                }}
+                
+                td {{ 
+                    padding: 12px; 
+                    text-align: left; 
+                    border: none; 
+                }}
+                
+                tr:nth-child(even) {{ 
+                    background-color: #f9f9f9; 
                 }}
             </style>
         </head>
@@ -590,7 +604,7 @@ def reconstruct_terminal_view(context):
     """Reconstruct the terminal view from execution log."""
     execution_log = context.user_data['execution_log']
     
-    # Extract process data from execution log
+    # Extract process data from execution log if available
     process_data = extract_process_data_from_log(execution_log)
     
     # If we have process data from the execution log, use it
