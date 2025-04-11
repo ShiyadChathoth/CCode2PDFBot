@@ -75,6 +75,10 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['terminal_log'] = []  # Raw terminal output for exact formatting
     context.user_data['program_completed'] = False  # Flag to track if program has completed
     
+    # Detect algorithm type from code
+    algorithm_type = detect_algorithm_type(code)
+    context.user_data['algorithm_type'] = algorithm_type
+    
     try:
         with open("temp.c", "w") as file:
             file.write(code)
@@ -156,6 +160,59 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     except Exception as e:
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
+
+def detect_algorithm_type(code):
+    """Detect the type of algorithm from the code."""
+    code_lower = code.lower()
+    
+    # Check for specific algorithm keywords
+    if "fcfs" in code_lower or "first come first serve" in code_lower:
+        return "FCFS"
+    elif "sjf" in code_lower or "shortest job first" in code_lower:
+        return "SJF"
+    elif "priority" in code_lower and "scheduling" in code_lower:
+        return "Priority"
+    elif "round robin" in code_lower or "roundrobin" in code_lower:
+        return "Round Robin"
+    elif "bestfit" in code_lower or "best fit" in code_lower:
+        return "Best Fit"
+    elif "worstfit" in code_lower or "worst fit" in code_lower:
+        return "Worst Fit"
+    elif "firstfit" in code_lower or "first fit" in code_lower:
+        return "First Fit"
+    
+    # Check for function names
+    if re.search(r'void\s+fcfs', code_lower) or re.search(r'int\s+fcfs', code_lower):
+        return "FCFS"
+    elif re.search(r'void\s+sjf', code_lower) or re.search(r'int\s+sjf', code_lower):
+        return "SJF"
+    elif re.search(r'void\s+priority', code_lower) or re.search(r'int\s+priority', code_lower):
+        return "Priority"
+    elif re.search(r'void\s+round_?robin', code_lower) or re.search(r'int\s+round_?robin', code_lower):
+        return "Round Robin"
+    elif re.search(r'void\s+best_?fit', code_lower) or re.search(r'int\s+best_?fit', code_lower):
+        return "Best Fit"
+    elif re.search(r'void\s+worst_?fit', code_lower) or re.search(r'int\s+worst_?fit', code_lower):
+        return "Worst Fit"
+    elif re.search(r'void\s+first_?fit', code_lower) or re.search(r'int\s+first_?fit', code_lower):
+        return "First Fit"
+    
+    # If no specific algorithm is detected, try to infer from code patterns
+    if "waiting time" in code_lower and "turnaround time" in code_lower:
+        if "burst" in code_lower:
+            return "FCFS"  # Default to FCFS for CPU scheduling
+    elif "memory" in code_lower and "allocation" in code_lower:
+        if "best" in code_lower:
+            return "Best Fit"
+        elif "worst" in code_lower:
+            return "Worst Fit"
+        elif "first" in code_lower:
+            return "First Fit"
+        else:
+            return "Memory Management"  # Generic memory management
+    
+    # Default to "C Program" if no specific algorithm is detected
+    return "C Program"
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -404,10 +461,11 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
 
 async def handle_title_input(update: Update, context: CallbackContext) -> int:
     title = update.message.text
+    algorithm_type = context.user_data.get('algorithm_type', 'C Program')
     
     if title.lower() == 'skip':
-        # Use default title
-        context.user_data['program_title'] = "C Program Execution Report"
+        # Use algorithm type as default title
+        context.user_data['program_title'] = algorithm_type
     else:
         # Use user-provided title
         context.user_data['program_title'] = title
@@ -421,7 +479,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
-        program_title = context.user_data.get('program_title', "C Program Execution Report")
+        program_title = context.user_data.get('program_title', "C Program")
+        algorithm_type = context.user_data.get('algorithm_type', 'C Program')
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
@@ -441,169 +500,142 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         prompts = [entry for entry in execution_log if entry['type'] == 'prompt']
         errors = [entry for entry in execution_log if entry['type'] == 'error']
         
-        # Reconstruct terminal view
-        terminal_view = reconstruct_terminal_view(context)
+        # Reconstruct terminal view based on algorithm type
+        terminal_view = reconstruct_terminal_view(context, algorithm_type)
         
-        # Generate HTML content for the PDF with two-column layout
+        # Generate HTML content for the PDF with the exact format from the example
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #333; text-align: center; }}
-                .program-title {{ 
-                    font-size: 32px;
-                    font-weight: bold;
-                    color: #0066cc; 
-                    margin-bottom: 15px;
-                    text-align: center;
-                    padding: 15px;
-                    background-color: #f0f8ff;
-                    border-radius: 8px;
-                    border: 2px solid #0066cc;
-                    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-                    text-transform: uppercase;
-                    letter-spacing: 1px;
+                body {{ 
+                    font-family: Arial, sans-serif; 
+                    margin: 20px; 
+                    padding: 0;
                 }}
                 
-                /* Two-column layout */
-                .two-column-container {{
+                .title-container {{
+                    border: 1px solid #b8daff;
+                    border-radius: 5px;
+                    background-color: #f0f8ff;
+                    padding: 10px;
+                    margin-bottom: 20px;
+                    text-align: center;
+                }}
+                
+                .program-title {{ 
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #0066cc; 
+                    margin: 0;
+                }}
+                
+                .content-container {{
                     display: flex;
-                    width: 100%;
-                    margin-top: 20px;
                     border: 1px solid #ddd;
+                    border-radius: 5px;
+                    overflow: hidden;
                 }}
                 
                 .left-column {{
                     width: 50%;
-                    padding: 15px;
-                    border-right: 1px solid #0066cc;
+                    border-right: 1px solid #b8daff;
                     box-sizing: border-box;
                 }}
                 
                 .right-column {{
                     width: 50%;
-                    padding: 15px;
                     box-sizing: border-box;
                 }}
                 
                 .column-header {{
-                    font-size: 18px;
-                    font-weight: bold;
-                    margin-bottom: 10px;
                     color: #0066cc;
+                    font-size: 16px;
+                    font-weight: bold;
+                    padding: 10px;
+                    margin: 0;
                 }}
                 
-                pre {{ 
-                    background-color: #f5f5f5; 
-                    padding: 10px; 
-                    border-radius: 5px; 
-                    overflow-x: auto; 
+                .code-section {{
+                    background-color: #f8f8ff;
+                    padding: 15px;
+                    font-family: Consolas, Monaco, 'Courier New', monospace;
                     font-size: 14px;
                     line-height: 1.4;
                     white-space: pre-wrap;
+                    overflow-wrap: break-word;
                 }}
                 
-                code {{
+                .output-section {{
+                    background-color: #f5f5f5;
+                    padding: 15px;
                     font-family: Consolas, Monaco, 'Courier New', monospace;
+                    font-size: 14px;
+                    line-height: 1.4;
                 }}
                 
-                .terminal {{ 
-                    background-color: #f0f0f0; 
-                    padding: 15px; 
-                    border-radius: 5px; 
-                    font-family: monospace; 
+                .system-messages {{
+                    margin-top: 20px;
+                    border-top: 1px solid #eee;
+                    padding-top: 10px;
                 }}
                 
-                .system-message {{ color: #0066cc; }}
-                .input {{ color: #009900; }}
-                .output {{ color: #000000; }}
-                .prompt {{ color: #990000; }}
-                .error {{ color: #cc0000; }}
+                .system-message-header {{
+                    color: #0066cc;
+                    font-size: 16px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                }}
                 
-                /* Modified table styles to remove borders between rows */
+                .system-message-box {{
+                    background-color: #f9f9f9;
+                    padding: 10px;
+                    margin: 5px 0;
+                    border-left: 3px solid #0066cc;
+                }}
+                
+                .timestamp {{
+                    color: #666;
+                    font-size: 0.9em;
+                }}
+                
+                /* Remove any table borders */
                 table {{ 
                     border-collapse: collapse; 
                     width: 100%; 
-                    margin: 15px 0; 
+                    margin: 0; 
                     border: none; 
                 }}
                 
-                th {{ 
-                    background-color: #f2f2f2; 
+                th, td {{ 
                     padding: 8px; 
                     text-align: left; 
                     border: none; 
-                }}
-                
-                td {{ 
-                    padding: 8px; 
-                    text-align: left; 
-                    border: none; 
-                }}
-                
-                /* Add subtle background to alternate rows for readability */
-                tr:nth-child(even) {{ 
-                    background-color: #f9f9f9; 
-                }}
-                
-                /* Remove progress bars completely */
-                .progress-container, .progress-bar {{ 
-                    display: none; 
-                }}
-                
-                .terminal-view {{ 
-                    background-color: #f5f5f5; 
-                    padding: 15px; 
-                    border-radius: 5px; 
-                    font-family: monospace; 
-                }}
-                
-                .system-messages {{ 
-                    margin-top: 20px; 
-                    border-top: 1px solid #eee; 
-                    padding-top: 10px; 
-                }}
-                
-                .system-message-box {{ 
-                    background-color: #f9f9f9; 
-                    padding: 10px; 
-                    margin: 5px 0; 
-                    border-left: 3px solid #0066cc; 
-                }}
-                
-                .timestamp {{ 
-                    color: #666; 
-                    font-size: 0.9em; 
-                }}
-                
-                .output-header {{
-                    font-weight: bold;
-                    margin-top: 15px;
-                    margin-bottom: 5px;
                 }}
             </style>
         </head>
         <body>
-            <div class="program-title">{html.escape(program_title)}</div>
+            <div class="title-container">
+                <div class="program-title">{html.escape(program_title)}</div>
+            </div>
             
-            <div class="two-column-container">
+            <div class="content-container">
                 <div class="left-column">
                     <div class="column-header">Source Code</div>
-                    <pre><code>{html.escape(code)}</code></pre>
+                    <div class="code-section">{html.escape(code)}</div>
                 </div>
                 
                 <div class="right-column">
                     <div class="column-header">OUTPUT</div>
-                    <div class="terminal-view">
+                    <div class="output-section">
                         {terminal_view}
                     </div>
-                    
-                    <div class="system-messages">
-                        <div class="output-header">System Messages</div>
-                        {generate_system_messages_html(filtered_execution_log)}
-                    </div>
                 </div>
+            </div>
+            
+            <div class="system-messages">
+                <div class="system-message-header">System Messages</div>
+                {generate_system_messages_html(filtered_execution_log)}
             </div>
         </body>
         </html>
@@ -637,7 +669,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
-                filename="program_execution.pdf",
+                filename=f"{program_title.replace(' ', '_')}.pdf",
                 caption=f"Here's the execution report of your C code: {program_title}"
             )
         
@@ -646,7 +678,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=html_file,
-                filename="program_execution.html",
+                filename=f"{program_title.replace(' ', '_')}.html",
                 caption="HTML version of the execution report for better viewing."
             )
     except Exception as e:
@@ -654,143 +686,215 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
-def reconstruct_terminal_view(context):
-    """Reconstruct the terminal view from execution log."""
+def reconstruct_terminal_view(context, algorithm_type):
+    """Reconstruct the terminal view from execution log based on algorithm type."""
     execution_log = context.user_data['execution_log']
     
-    # Extract process data from execution log
-    process_data = extract_process_data_from_log(execution_log)
+    # Extract all prompts and outputs in order
+    terminal_entries = []
+    for entry in execution_log:
+        if entry['type'] in ['prompt', 'output', 'input']:
+            terminal_entries.append(entry)
     
-    # If we have process data from the execution log, use it
-    if process_data:
-        # Generate the terminal view HTML
-        html_output = ""
-        
-        # First, add the process input section
-        num_processes = len(process_data)
-        html_output += f"<p>Enter the number of blocks : {num_processes}</p>"
-        
-        # Calculate number of files based on process data
-        num_files = max(len([p for p in process_data if p.get('file_size')]), num_processes)
-        html_output += f"<p>Enter the number of files : {num_files}</p>"
-        
-        html_output += "<p>Enter the size of the blocks :</p>"
-        for i, proc in enumerate(process_data):
-            html_output += f"<p>Block {i+1} : {proc['burst']}</p>"
-        
-        html_output += "<p>Enter the size of the files :-</p>"
-        for i, proc in enumerate(process_data):
-            file_size = proc.get('file_size', proc['burst'])
-            html_output += f"<p>File {i+1}: {file_size}</p>"
-        
-        # Add allocation results
-        for i, proc in enumerate(process_data):
-            if proc.get('allocation_status') == 'wait':
-                html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} must wait</p>"
-            else:
-                html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} is put in {proc.get('allocation_partition', proc['burst'])} partition</p>"
-        
-        return html_output
+    # Sort by timestamp
+    terminal_entries.sort(key=lambda x: x['timestamp'])
+    
+    # Process based on algorithm type
+    if algorithm_type in ["FCFS", "SJF", "Priority", "Round Robin"]:
+        return reconstruct_cpu_scheduling_view(terminal_entries)
+    elif algorithm_type in ["Best Fit", "Worst Fit", "First Fit", "Memory Management"]:
+        return reconstruct_memory_management_view(terminal_entries)
     else:
-        # If no process data was extracted, create a default terminal view based on the code
-        # This ensures we always show something in the terminal view section
-        
-        # Extract code structure to determine if it's a process scheduling program
-        code = context.user_data.get('code', '')
-        
-        # Check if this looks like a process scheduling program
-        if 'process' in code.lower() and ('burst' in code.lower() or 'wait' in code.lower() or 'turnaround' in code.lower()):
-            # Create sample process data based on code structure
-            sample_processes = create_sample_process_data(code)
-            
-            if sample_processes:
-                # Generate the terminal view HTML with sample data
-                html_output = ""
-                
-                # First, add the process input section
-                num_processes = len(sample_processes)
-                html_output += f"<p>Enter the number of blocks : {num_processes}</p>"
-                
-                # Calculate number of files based on process data
-                num_files = num_processes
-                html_output += f"<p>Enter the number of files : {num_files}</p>"
-                
-                html_output += "<p>Enter the size of the blocks :</p>"
-                for i, proc in enumerate(sample_processes):
-                    html_output += f"<p>Block {i+1} : {proc['burst']}</p>"
-                
-                html_output += "<p>Enter the size of the files :-</p>"
-                for i, proc in enumerate(sample_processes):
-                    file_size = proc.get('file_size', proc['burst'])
-                    html_output += f"<p>File {i+1}: {file_size}</p>"
-                
-                # Add allocation results
-                for i, proc in enumerate(sample_processes):
-                    if i % 4 == 3:  # Make every 4th process wait (for demonstration)
-                        html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} must wait</p>"
-                    else:
-                        partition = proc['burst'] + 100  # Just a sample partition size
-                        html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} is put in {partition} partition</p>"
-                
-                return html_output
-        
-        # If we couldn't create sample data or it's not a process scheduling program,
-        # extract all program output to show in terminal view
-        all_output = []
-        for entry in execution_log:
-            if entry['type'] in ['output', 'prompt']:
-                all_output.append(f"<p>{html.escape(entry['message'])}</p>")
-        
-        if all_output:
-            return "\n".join(all_output)
-        else:
-            # If there's no output at all, show a message
-            return "<p>No terminal output available</p>"
+        # Generic terminal view for other programs
+        return reconstruct_generic_terminal_view(terminal_entries)
 
-def create_sample_process_data(code):
-    """Create sample process data based on code structure."""
-    # Try to determine the number of processes from the code
-    process_count_match = re.search(r'n\s*=\s*(\d+)', code)
-    if process_count_match:
-        process_count = int(process_count_match.group(1))
+def reconstruct_cpu_scheduling_view(terminal_entries):
+    """Reconstruct terminal view for CPU scheduling algorithms."""
+    html_output = []
+    
+    # Extract key information
+    num_processes = None
+    process_data = []
+    
+    # First pass: extract process count and burst times
+    for entry in terminal_entries:
+        message = entry['message']
+        
+        # Look for number of processes
+        match = re.search(r'Enter the (?:no\.?|number) of process(?:es)?\s*:\s*(\d+)', message, re.IGNORECASE)
+        if match and num_processes is None:
+            num_processes = int(match.group(1))
+            html_output.append(f"<p>Enter the number of blocks : {num_processes}</p>")
+            continue
+        
+        # Look for burst times
+        match = re.search(r'Enter the [Bb]urst time of process\s*(\d+)\s*:\s*(\d+)', message)
+        if match:
+            process_id = int(match.group(1))
+            burst_time = int(match.group(2))
+            
+            # Add to process data
+            while len(process_data) <= process_id:
+                process_data.append({})
+            
+            process_data[process_id]['burst'] = burst_time
+            html_output.append(f"<p>Block {process_id+1} : {burst_time}</p>")
+            continue
+    
+    # If we found processes, add the rest of the output
+    if num_processes and process_data:
+        # Add number of files (same as processes for CPU scheduling)
+        html_output.insert(1, f"<p>Enter the number of files : {num_processes}</p>")
+        
+        # Add file sizes section header
+        html_output.append("<p>Enter the size of the files :-</p>")
+        
+        # Add file sizes (same as burst times for CPU scheduling)
+        for i, proc in enumerate(process_data):
+            if 'burst' in proc:
+                html_output.append(f"<p>File {i+1}: {proc['burst']}</p>")
+        
+        # Look for allocation results
+        for entry in terminal_entries:
+            message = entry['message']
+            
+            # Look for turnaround and waiting times in table format
+            if re.search(r'\d+\s+\d+\s+\d+\s+\d+', message):
+                parts = re.split(r'\s+', message.strip())
+                if len(parts) >= 4:
+                    try:
+                        pid = int(parts[0])
+                        burst = int(parts[1])
+                        turnaround = int(parts[2])
+                        waiting = int(parts[3])
+                        
+                        # Add allocation message based on waiting time
+                        if waiting > 0:
+                            html_output.append(f"<p>File Size {burst} is put in {turnaround} partition</p>")
+                        else:
+                            html_output.append(f"<p>File Size {burst} must wait</p>")
+                    except (ValueError, IndexError):
+                        pass
     else:
-        # Default to 4 processes if we can't determine
-        process_count = 4
+        # If we couldn't extract structured data, just show all terminal output
+        for entry in terminal_entries:
+            html_output.append(f"<p>{html.escape(entry['message'])}</p>")
     
-    # Limit to a reasonable number
-    process_count = min(process_count, 10)
+    return "\n".join(html_output)
+
+def reconstruct_memory_management_view(terminal_entries):
+    """Reconstruct terminal view for memory management algorithms."""
+    html_output = []
     
-    # Create sample process data
-    sample_processes = []
+    # Extract key information
+    num_blocks = None
+    num_files = None
+    blocks = []
+    files = []
     
-    # Sample burst times (block sizes)
-    burst_times = [100, 500, 200, 300, 600, 400, 250, 350, 450, 550]
-    
-    # Sample file sizes
-    file_sizes = [212, 417, 112, 426, 300, 150, 275, 320, 190, 430]
-    
-    # Calculate allocation based on worst-fit algorithm
-    for i in range(process_count):
-        burst = burst_times[i % len(burst_times)]
-        file_size = file_sizes[i % len(file_sizes)]
+    # First pass: extract blocks and files
+    for entry in terminal_entries:
+        message = entry['message']
         
-        # For demonstration, create some allocation logic
-        if file_size > burst:
-            allocation_status = 'wait'
-            allocation_partition = None
-        else:
-            allocation_status = 'allocated'
-            allocation_partition = burst
+        # Look for number of blocks
+        match = re.search(r'Enter the (?:no\.?|number) of blocks\s*:\s*(\d+)', message, re.IGNORECASE)
+        if match and num_blocks is None:
+            num_blocks = int(match.group(1))
+            html_output.append(f"<p>Enter the number of blocks : {num_blocks}</p>")
+            continue
         
-        sample_processes.append({
-            'pid': i,
-            'burst': burst,
-            'file_size': file_size,
-            'allocation_status': allocation_status,
-            'allocation_partition': allocation_partition
-        })
+        # Look for number of files
+        match = re.search(r'Enter the (?:no\.?|number) of files\s*:\s*(\d+)', message, re.IGNORECASE)
+        if match and num_files is None:
+            num_files = int(match.group(1))
+            html_output.append(f"<p>Enter the number of files : {num_files}</p>")
+            continue
+        
+        # Look for block sizes
+        match = re.search(r'Block\s*(\d+)\s*:\s*(\d+)', message, re.IGNORECASE)
+        if match:
+            block_id = int(match.group(1))
+            block_size = int(match.group(2))
+            
+            # Add to blocks list
+            while len(blocks) < block_id:
+                blocks.append(0)
+            
+            blocks.append(block_size)
+            continue
+        
+        # Look for file sizes
+        match = re.search(r'File\s*(\d+)\s*:\s*(\d+)', message, re.IGNORECASE)
+        if match:
+            file_id = int(match.group(1))
+            file_size = int(match.group(2))
+            
+            # Add to files list
+            while len(files) < file_id:
+                files.append(0)
+            
+            files.append(file_size)
+            continue
     
-    return sample_processes
+    # If we found blocks and files, format the output
+    if blocks and files:
+        # Add block sizes section header
+        if "Enter the size of the blocks" not in html_output[2]:
+            html_output.append("<p>Enter the size of the blocks :</p>")
+        
+        # Add block sizes
+        for i, size in enumerate(blocks):
+            if size > 0:
+                html_output.append(f"<p>Block {i} : {size}</p>")
+        
+        # Add file sizes section header
+        html_output.append("<p>Enter the size of the files :-</p>")
+        
+        # Add file sizes
+        for i, size in enumerate(files):
+            if size > 0:
+                html_output.append(f"<p>File {i}: {size}</p>")
+        
+        # Look for allocation results
+        for entry in terminal_entries:
+            message = entry['message']
+            
+            # Look for "is put in" messages
+            match = re.search(r'File Size\s*(\d+)\s*is put in\s*(\d+)\s*partition', message, re.IGNORECASE)
+            if match:
+                file_size = match.group(1)
+                partition = match.group(2)
+                html_output.append(f"<p>File Size {file_size} is put in {partition} partition</p>")
+                continue
+            
+            # Look for "must wait" messages
+            match = re.search(r'File Size\s*(\d+)\s*must wait', message, re.IGNORECASE)
+            if match:
+                file_size = match.group(1)
+                html_output.append(f"<p>File Size {file_size} must wait</p>")
+                continue
+    else:
+        # If we couldn't extract structured data, just show all terminal output
+        for entry in terminal_entries:
+            html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+    
+    return "\n".join(html_output)
+
+def reconstruct_generic_terminal_view(terminal_entries):
+    """Reconstruct terminal view for generic programs."""
+    html_output = []
+    
+    for entry in terminal_entries:
+        # Skip user inputs to avoid duplication
+        if entry['type'] == 'input':
+            continue
+            
+        html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+    
+    if not html_output:
+        return "<p>No terminal output available</p>"
+    
+    return "\n".join(html_output)
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
@@ -809,125 +913,6 @@ def generate_system_messages_html(system_messages):
         """
     
     return html_output
-
-def extract_process_data_from_log(execution_log):
-    """Extract process scheduling data from execution log if available."""
-    processes = []
-    
-    # Look for patterns in output that might indicate process data
-    # Enhanced pattern matching to catch more variations
-    process_patterns = [
-        re.compile(r'Enter the Burst time of process (\d+)\s*:\s*(\d+)'),
-        re.compile(r'Enter the burst time of process (\d+)\s*:\s*(\d+)'),
-        re.compile(r'Enter burst time for P(\d+)\s*:\s*(\d+)'),
-        re.compile(r'P(\d+)\s+burst time\s*:\s*(\d+)'),
-        re.compile(r'Block (\d+)\s*:\s*(\d+)'),  # For memory management algorithms
-        re.compile(r'Enter the size of the blocks.*Block (\d+)\s*:\s*(\d+)')  # For memory management
-    ]
-    
-    # Patterns for file sizes in memory management
-    file_patterns = [
-        re.compile(r'File (\d+)\s*:\s*(\d+)'),
-        re.compile(r'Enter the size of the files.*File (\d+)\s*:\s*(\d+)')
-    ]
-    
-    # Patterns for allocation results
-    allocation_patterns = [
-        re.compile(r'File Size (\d+) is put in (\d+) partition'),
-        re.compile(r'File Size (\d+) must wait')
-    ]
-    
-    # First pass: extract process IDs and burst times (block sizes)
-    for entry in execution_log:
-        if entry['type'] in ['output', 'prompt']:
-            message = entry['message']
-            
-            # Try all process patterns
-            for pattern in process_patterns:
-                match = pattern.search(message)
-                if match:
-                    pid = int(match.group(1))
-                    burst = int(match.group(2))
-                    
-                    # Check if this process is already in our list
-                    existing = next((p for p in processes if p['pid'] == pid), None)
-                    if existing:
-                        existing['burst'] = burst
-                    else:
-                        processes.append({
-                            'pid': pid,
-                            'burst': burst,
-                            'turnaround': 0,
-                            'waiting': 0,
-                            'file_size': 0,
-                            'allocation_status': None,
-                            'allocation_partition': None
-                        })
-                    break
-    
-    # Second pass: extract file sizes
-    for entry in execution_log:
-        if entry['type'] in ['output', 'prompt']:
-            message = entry['message']
-            
-            # Try all file patterns
-            for pattern in file_patterns:
-                match = pattern.search(message)
-                if match:
-                    file_id = int(match.group(1))
-                    file_size = int(match.group(2))
-                    
-                    # If we have enough processes, update the file size
-                    if file_id <= len(processes):
-                        processes[file_id-1]['file_size'] = file_size
-                    break
-    
-    # Third pass: extract allocation results
-    for entry in execution_log:
-        if entry['type'] == 'output':
-            message = entry['message']
-            
-            # Check for "is put in" pattern
-            match = re.search(r'File Size (\d+) is put in (\d+) partition', message)
-            if match:
-                file_size = int(match.group(1))
-                partition = int(match.group(2))
-                
-                # Find the process with this file size
-                for proc in processes:
-                    if proc['file_size'] == file_size:
-                        proc['allocation_status'] = 'allocated'
-                        proc['allocation_partition'] = partition
-                        break
-                continue
-            
-            # Check for "must wait" pattern
-            match = re.search(r'File Size (\d+) must wait', message)
-            if match:
-                file_size = int(match.group(1))
-                
-                # Find the process with this file size
-                for proc in processes:
-                    if proc['file_size'] == file_size:
-                        proc['allocation_status'] = 'wait'
-                        break
-    
-    # If we still don't have complete data, calculate missing values
-    if processes:
-        # For any process without allocation status, set defaults
-        for proc in processes:
-            if not proc['allocation_status']:
-                if proc['file_size'] == 0:
-                    proc['file_size'] = proc['burst']
-                
-                # Simple allocation logic: if file size <= burst, allocate; otherwise wait
-                if proc['file_size'] <= proc['burst']:
-                    proc['allocation_status'] = 'allocated'
-                    proc['allocation_partition'] = proc['burst']
-                else:
-                    proc['allocation_status'] = 'wait'
-    
-    return processes
 
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
