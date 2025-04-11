@@ -524,10 +524,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 
                 .program-title {{ 
-                    font-size: 24px;
+                    font-size: 32px;
                     font-weight: bold;
                     color: #0066cc; 
                     margin: 0;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
                 }}
                 
                 .content-container {{
@@ -599,18 +601,43 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-size: 0.9em;
                 }}
                 
-                /* Remove any table borders */
+                /* Table styling for proper alignment */
                 table {{ 
                     border-collapse: collapse; 
                     width: 100%; 
-                    margin: 0; 
+                    margin: 10px 0; 
                     border: none; 
+                    table-layout: fixed;
                 }}
                 
-                th, td {{ 
+                th {{ 
+                    background-color: #f2f2f2; 
                     padding: 8px; 
                     text-align: left; 
                     border: none; 
+                    font-weight: bold;
+                }}
+                
+                td {{ 
+                    padding: 8px; 
+                    text-align: left; 
+                    border: none; 
+                }}
+                
+                /* Ensure consistent column widths */
+                .col-pid {{ width: 15%; }}
+                .col-burst {{ width: 25%; }}
+                .col-turnaround {{ width: 30%; }}
+                .col-waiting {{ width: 30%; }}
+                
+                /* Monospace font for table data to ensure alignment */
+                .data-table {{ 
+                    font-family: Consolas, Monaco, 'Courier New', monospace;
+                }}
+                
+                /* Alternating row colors for better readability */
+                tr:nth-child(even) {{ 
+                    background-color: #f9f9f9; 
                 }}
             </style>
         </head>
@@ -709,7 +736,7 @@ def reconstruct_terminal_view(context, algorithm_type):
         return reconstruct_generic_terminal_view(terminal_entries)
 
 def reconstruct_cpu_scheduling_view(terminal_entries):
-    """Reconstruct terminal view for CPU scheduling algorithms."""
+    """Reconstruct terminal view for CPU scheduling algorithms with proper table alignment."""
     html_output = []
     
     # Extract key information
@@ -724,7 +751,7 @@ def reconstruct_cpu_scheduling_view(terminal_entries):
         match = re.search(r'Enter the (?:no\.?|number) of process(?:es)?\s*:\s*(\d+)', message, re.IGNORECASE)
         if match and num_processes is None:
             num_processes = int(match.group(1))
-            html_output.append(f"<p>Enter the number of blocks : {num_processes}</p>")
+            html_output.append(f"<p>{match.group(0)}</p>")
             continue
         
         # Look for burst times
@@ -738,52 +765,73 @@ def reconstruct_cpu_scheduling_view(terminal_entries):
                 process_data.append({})
             
             process_data[process_id]['burst'] = burst_time
-            html_output.append(f"<p>Block {process_id+1} : {burst_time}</p>")
+            html_output.append(f"<p>{match.group(0)}</p>")
             continue
     
-    # If we found processes, add the rest of the output
-    if num_processes and process_data:
-        # Add number of files (same as processes for CPU scheduling)
-        html_output.insert(1, f"<p>Enter the number of files : {num_processes}</p>")
+    # Look for "Order of execution" line
+    order_line = None
+    for entry in terminal_entries:
+        if "Order of execution" in entry['message']:
+            order_line = entry['message']
+            break
+    
+    if order_line:
+        html_output.append(f"<p>{order_line}</p>")
         
-        # Add file sizes section header
-        html_output.append("<p>Enter the size of the files :-</p>")
+        # Extract the execution order (P0->P1->P2->P3)
+        match = re.search(r'P\d+(?:->P\d+)+', order_line)
+        if match:
+            html_output.append(f"<p>{match.group(0)}</p>")
+    
+    # Look for table header and data
+    table_data = []
+    for entry in terminal_entries:
+        message = entry['message']
         
-        # Add file sizes (same as burst times for CPU scheduling)
-        for i, proc in enumerate(process_data):
-            if 'burst' in proc:
-                html_output.append(f"<p>File {i+1}: {proc['burst']}</p>")
-        
-        # Look for allocation results
-        for entry in terminal_entries:
-            message = entry['message']
+        # Check for table header pattern (PID Burst Time Turnaround Time waiting Time)
+        if re.search(r'PID\s+Burst\s+Time\s+Turnaround\s+Time\s+waiting\s+Time', message, re.IGNORECASE):
+            # Found table header, now create a properly formatted HTML table
+            html_output.append("""
+            <table class="data-table">
+                <tr>
+                    <th class="col-pid">PID</th>
+                    <th class="col-burst">Burst Time</th>
+                    <th class="col-turnaround">Turnaround Time</th>
+                    <th class="col-waiting">Waiting Time</th>
+                </tr>
+            """)
             
-            # Look for turnaround and waiting times in table format
-            if re.search(r'\d+\s+\d+\s+\d+\s+\d+', message):
-                parts = re.split(r'\s+', message.strip())
-                if len(parts) >= 4:
-                    try:
-                        pid = int(parts[0])
-                        burst = int(parts[1])
-                        turnaround = int(parts[2])
-                        waiting = int(parts[3])
-                        
-                        # Add allocation message based on waiting time
-                        if waiting > 0:
-                            html_output.append(f"<p>File Size {burst} is put in {turnaround} partition</p>")
-                        else:
-                            html_output.append(f"<p>File Size {burst} must wait</p>")
-                    except (ValueError, IndexError):
-                        pass
-    else:
-        # If we couldn't extract structured data, just show all terminal output
-        for entry in terminal_entries:
-            html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+            # Now look for table rows
+            for row_entry in terminal_entries:
+                row_message = row_entry['message']
+                # Look for rows with 4 numbers separated by spaces
+                match = re.search(r'^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$', row_message)
+                if match:
+                    pid = match.group(1)
+                    burst = match.group(2)
+                    turnaround = match.group(3)
+                    waiting = match.group(4)
+                    
+                    html_output.append(f"""
+                    <tr>
+                        <td class="col-pid">{pid}</td>
+                        <td class="col-burst">{burst}</td>
+                        <td class="col-turnaround">{turnaround}</td>
+                        <td class="col-waiting">{waiting}</td>
+                    </tr>
+                    """)
+            
+            html_output.append("</table>")
+            return "\n".join(html_output)
+    
+    # If we couldn't find a table structure, display the raw output
+    for entry in terminal_entries:
+        html_output.append(f"<p>{html.escape(entry['message'])}</p>")
     
     return "\n".join(html_output)
 
 def reconstruct_memory_management_view(terminal_entries):
-    """Reconstruct terminal view for memory management algorithms."""
+    """Reconstruct terminal view for memory management algorithms with proper alignment."""
     html_output = []
     
     # Extract key information
@@ -800,14 +848,14 @@ def reconstruct_memory_management_view(terminal_entries):
         match = re.search(r'Enter the (?:no\.?|number) of blocks\s*:\s*(\d+)', message, re.IGNORECASE)
         if match and num_blocks is None:
             num_blocks = int(match.group(1))
-            html_output.append(f"<p>Enter the number of blocks : {num_blocks}</p>")
+            html_output.append(f"<p>{match.group(0)}</p>")
             continue
         
         # Look for number of files
         match = re.search(r'Enter the (?:no\.?|number) of files\s*:\s*(\d+)', message, re.IGNORECASE)
         if match and num_files is None:
             num_files = int(match.group(1))
-            html_output.append(f"<p>Enter the number of files : {num_files}</p>")
+            html_output.append(f"<p>{match.group(0)}</p>")
             continue
         
         # Look for block sizes
@@ -821,6 +869,7 @@ def reconstruct_memory_management_view(terminal_entries):
                 blocks.append(0)
             
             blocks.append(block_size)
+            html_output.append(f"<p>{match.group(0)}</p>")
             continue
         
         # Look for file sizes
@@ -834,62 +883,92 @@ def reconstruct_memory_management_view(terminal_entries):
                 files.append(0)
             
             files.append(file_size)
+            html_output.append(f"<p>{match.group(0)}</p>")
             continue
     
-    # If we found blocks and files, format the output
-    if blocks and files:
-        # Add block sizes section header
-        if "Enter the size of the blocks" not in html_output[2]:
-            html_output.append("<p>Enter the size of the blocks :</p>")
+    # Look for allocation results
+    allocation_results = []
+    for entry in terminal_entries:
+        message = entry['message']
         
-        # Add block sizes
-        for i, size in enumerate(blocks):
-            if size > 0:
-                html_output.append(f"<p>Block {i} : {size}</p>")
+        # Look for "is put in" messages
+        match = re.search(r'File Size\s*(\d+)\s*is put in\s*(\d+)\s*partition', message, re.IGNORECASE)
+        if match:
+            file_size = match.group(1)
+            partition = match.group(2)
+            allocation_results.append(f"<p>File Size {file_size} is put in {partition} partition</p>")
+            continue
         
-        # Add file sizes section header
-        html_output.append("<p>Enter the size of the files :-</p>")
-        
-        # Add file sizes
-        for i, size in enumerate(files):
-            if size > 0:
-                html_output.append(f"<p>File {i}: {size}</p>")
-        
-        # Look for allocation results
-        for entry in terminal_entries:
-            message = entry['message']
-            
-            # Look for "is put in" messages
-            match = re.search(r'File Size\s*(\d+)\s*is put in\s*(\d+)\s*partition', message, re.IGNORECASE)
-            if match:
-                file_size = match.group(1)
-                partition = match.group(2)
-                html_output.append(f"<p>File Size {file_size} is put in {partition} partition</p>")
-                continue
-            
-            # Look for "must wait" messages
-            match = re.search(r'File Size\s*(\d+)\s*must wait', message, re.IGNORECASE)
-            if match:
-                file_size = match.group(1)
-                html_output.append(f"<p>File Size {file_size} must wait</p>")
-                continue
+        # Look for "must wait" messages
+        match = re.search(r'File Size\s*(\d+)\s*must wait', message, re.IGNORECASE)
+        if match:
+            file_size = match.group(1)
+            allocation_results.append(f"<p>File Size {file_size} must wait</p>")
+            continue
+    
+    # Add allocation results if found
+    if allocation_results:
+        html_output.extend(allocation_results)
     else:
         # If we couldn't extract structured data, just show all terminal output
         for entry in terminal_entries:
-            html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+            if entry['message'] not in [line.strip("<p>").strip("</p>") for line in html_output]:
+                html_output.append(f"<p>{html.escape(entry['message'])}</p>")
     
     return "\n".join(html_output)
 
 def reconstruct_generic_terminal_view(terminal_entries):
-    """Reconstruct terminal view for generic programs."""
+    """Reconstruct terminal view for generic programs with proper alignment."""
     html_output = []
     
+    # Check if there's a table structure in the output
+    table_header = None
+    table_rows = []
+    
     for entry in terminal_entries:
+        message = entry['message']
+        
         # Skip user inputs to avoid duplication
         if entry['type'] == 'input':
             continue
-            
-        html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+        
+        # Check for potential table headers with multiple columns
+        if re.search(r'\b\w+\b\s+\b\w+\b\s+\b\w+\b', message) and not table_header:
+            # This might be a table header
+            columns = re.findall(r'\b\w+(?:\s+\w+)*\b', message)
+            if len(columns) >= 3:  # At least 3 columns to be considered a table
+                table_header = columns
+                continue
+        
+        # If we found a header, look for rows
+        if table_header and re.match(r'^\s*\d+\s+\d+\s+\d+', message):
+            # This looks like a data row
+            table_rows.append(message)
+            continue
+        
+        # Regular output line
+        html_output.append(f"<p>{html.escape(message)}</p>")
+    
+    # If we found a table structure, format it properly
+    if table_header and table_rows:
+        table_html = ['<table class="data-table">']
+        
+        # Add header row
+        table_html.append('<tr>')
+        for col in table_header:
+            table_html.append(f'<th>{html.escape(col)}</th>')
+        table_html.append('</tr>')
+        
+        # Add data rows
+        for row in table_rows:
+            cells = re.findall(r'\S+', row)
+            table_html.append('<tr>')
+            for cell in cells:
+                table_html.append(f'<td>{html.escape(cell)}</td>')
+            table_html.append('</tr>')
+        
+        table_html.append('</table>')
+        html_output.append('\n'.join(table_html))
     
     if not html_output:
         return "<p>No terminal output available</p>"
