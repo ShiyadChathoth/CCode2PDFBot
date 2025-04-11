@@ -701,29 +701,26 @@ def reconstruct_terminal_view(context):
             execution_order += f"->P{i}"
         html_output += f"<p>{execution_order}-></p>"
         
-        # Add the process table header with clean styling (no borders)
+        # Use a pre-formatted text approach with monospace font and consistent spacing
         html_output += """
-        <table style="table-layout: fixed; width: 100%;">
-            <tr>
-                <th style="width: 25%;">PID</th>
-                <th style="width: 25%;">Burst Time</th>
-                <th style="width: 25%;">Turnaround Time</th>
-                <th style="width: 25%;">Waiting Time</th>
-            </tr>
+        <div style="font-family: monospace; white-space: pre; font-size: 16px; line-height: 1.5; background-color: #f5f5f5; padding: 15px; border-radius: 8px;">
+<span style="font-weight: bold;">PID  Burst Time  Turnaround Time  Waiting Time</span>"""
+        
+        # Add each process row with consistent spacing
+        for proc in process_data:
+            pid_str = str(proc['pid']).ljust(4)
+            burst_str = str(proc['burst']).ljust(11)
+            turnaround_str = str(proc['turnaround']).ljust(16)
+            waiting_str = str(proc['waiting'])
+            
+            html_output += f"""
+{pid_str}{burst_str}{turnaround_str}{waiting_str}"""
+        
+        html_output += """
+        </div>
         """
         
-        # Add each process row without any progress bars or borders
-        for proc in process_data:
-            html_output += f"""
-            <tr>
-                <td style="width: 25%;">{proc['pid']}</td>
-                <td style="width: 25%;">{proc['burst']}</td>
-                <td style="width: 25%;">{proc['turnaround']}</td>
-                <td style="width: 25%;">{proc['waiting']}</td>
-            </tr>
-            """
-        
-        html_output += "</table>"
+        # No closing table tag needed with the new approach
         
         return html_output
     
@@ -931,3 +928,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
