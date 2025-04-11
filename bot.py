@@ -369,158 +369,83 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
-        
-        execution_log.sort(key=lambda x: x['timestamp'])
-        
-        filtered_execution_log = [
-            entry for entry in execution_log 
-            if entry['type'] == 'system' and (
-                'compiled successfully' in entry['message'] or 
-                'execution completed' in entry['message']
-            )
-        ]
-        
-        inputs = [entry for entry in execution_log if entry['type'] == 'input']
-        outputs = [entry for entry in execution_log if entry['type'] == 'output']
-        prompts = [entry for entry in execution_log if entry['type'] == 'prompt']
-        errors = [entry for entry in execution_log if entry['type'] == 'error']
-        
-        terminal_view = reconstruct_terminal_view(context)
-        
+
+        # Generate HTML with proper tab alignment styling
         html_content = f"""
         <html>
         <head>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #333; font-size: 28px; margin-top: 30px; margin-bottom: 15px; }}
-                
-                .program-title {{ 
-                    font-size: 36px;
-                    font-weight: bold; 
-                    color: #0066cc; 
-                    margin: 20px 0 30px 0;
+                .program-title {{
+                    font-size: 24px;
+                    font-weight: bold;
                     text-align: center;
-                    padding: 20px; 
-                    background-color: #f0f8ff; 
-                    border-radius: 10px; 
-                    border: 3px solid #0066cc; 
-                    box-shadow: 0 6px 12px rgba(0,0,0,0.15); 
-                    text-transform: uppercase; 
-                    letter-spacing: 2px; 
-                }}
-                
-        pre {
-    font-family: 'Courier New', monospace;
-    white-space: pre;
-    font-size: 12px;
-    line-height: 1.3;
-    tab-size: 8;
-    margin: 0;
-    padding: 10px;
-    background: #f8f8f8;
-}
-                
-                .terminal-view {{ 
-                    font-family: monospace;
-                    white-space: pre;
-                    background-color: #f5f5f5;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border: 1px solid #ddd;
                     margin-bottom: 20px;
-                    font-size: 14px;
-                    line-height: 1.5;
                 }}
-                
-                .system-messages {{ 
-                    margin-top: 20px; 
-                    border-top: 1px solid #eee; 
-                    padding-top: 10px; 
+                pre {{
+                    font-family: 'Courier New', monospace;
+                    white-space: pre;
+                    font-size: 12px;
+                    line-height: 1.3;
+                    tab-size: 8;
+                    -moz-tab-size: 8;
+                    -o-tab-size: 8;
+                    background: #f8f8f8;
+                    padding: 10px;
+                    border-radius: 5px;
                 }}
-                
-                .system-message-box {{ 
-                    background-color: #f9f9f9; 
-                    padding: 15px; 
-                    margin: 10px 0; 
-                    border-left: 4px solid #0066cc; 
-                    font-size: 15px;
-                }}
-                
-                .timestamp {{ 
-                    color: #666; 
-                    font-size: 0.9em; 
+                .terminal-view {{
+                    margin: 15px 0;
                 }}
             </style>
         </head>
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
             
-            <h1>Source Code</h1>
+            <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
             
-            <h1>Terminal View</h1>
+            <h2>Terminal Output</h2>
             <div class="terminal-view">
-                {terminal_view}
-            </div>
-            
-            <h1>System Messages</h1>
-            <div class="system-messages">
-                {generate_system_messages_html(filtered_execution_log)}
+                {reconstruct_terminal_view(context)}
             </div>
         </body>
         </html>
         """
-        
+
         with open("output.html", "w") as file:
             file.write(html_content)
-        
-        try:
-            subprocess.run(["which", "wkhtmltopdf"], check=True, capture_output=True)
-        except subprocess.CalledProcessError:
-            await update.message.reply_text("Installing PDF generation tool...")
-            subprocess.run(["apt-get", "update"], check=True)
-            subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], check=True)
-        
-        safe_filename = re.sub(r'[^\w\s-]', '', program_title).strip().replace(' ', '_')
-        if not safe_filename:
-            safe_filename = "program_execution"
-        
-        pdf_filename = f"{safe_filename}.pdf"
-        html_filename = f"{safe_filename}.html"
-        
+
+        # Generate PDF
+        pdf_filename = "output.pdf"
         subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
-        
+
+        # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
                 filename=pdf_filename,
-                caption=f"Here's the execution report of your C code: {program_title}"
+                caption=f"Execution report for {program_title}"
             )
-        
-        with open('output.html', 'rb') as html_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=html_file,
-                filename=html_filename,
-                caption="HTML version of the execution report for better viewing."
-            )
+
     except Exception as e:
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
 
+
 def reconstruct_terminal_view(context):
-    """Preserve tab alignment exactly as in terminal output"""
+    """Reconstruct terminal output with proper tab alignment"""
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
         raw_output = ''.join(terminal_log)
-        # Convert tabs to 8 spaces for perfect PDF alignment
+        # Convert tabs to 8 spaces for consistent alignment
         raw_output = raw_output.expandtabs(8)
-        return f"<pre style='font-family: Courier New; white-space: pre;'>{html.escape(raw_output)}</pre>"
+        return f"<pre>{html.escape(raw_output)}</pre>"
     
-    return "<pre>No terminal output</pre>"
+    return "<pre>No terminal output available</pre>"
     
     # Otherwise try to reconstruct from execution log
     if execution_log:
