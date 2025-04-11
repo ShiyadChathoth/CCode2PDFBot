@@ -432,9 +432,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre; 
                     line-height: 1.5;
                     margin: 0;
-                    tab-size: 16;
-                    -moz-tab-size: 16;
-                    -o-tab-size: 16;
+                    tab-size: 8;
+                    -moz-tab-size: 8;
+                    -o-tab-size: 8;
                     padding: 15px;
                     background-color: #f8f9fa;
                     border-radius: 5px;
@@ -442,6 +442,23 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     word-spacing: 0;
                     font-size: 14px;
                     font-variant-ligatures: none;
+                    font-feature-settings: "tnum";
+                    font-variant-numeric: tabular-nums;
+                    -webkit-font-feature-settings: "tnum";
+                    -moz-font-feature-settings: "tnum";
+                }}
+                
+                /* Special style for table content */
+                .terminal-table {{
+                    font-family: 'Courier New', monospace;
+                    white-space: pre;
+                    display: inline-block;
+                    width: 100%;
+                    overflow-x: auto;
+                    font-size: 14px;
+                    font-feature-settings: "tnum";
+                    font-variant-numeric: tabular-nums;
+                    letter-spacing: 0.4ch; /* Increase letter spacing for better column alignment */
                 }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
@@ -470,8 +487,52 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         for entry in terminal_log:
             terminal_content += entry
         
-        # Preserve exact spacing and formatting
-        html_content += html.escape(terminal_content)
+        # Process terminal content to detect and enhance table-like structures
+        processed_content = ""
+        lines = terminal_content.split('\n')
+        in_table = False
+        table_buffer = []
+        
+        for line in lines:
+            # Detect table headers or rows by checking for multiple spaces or tabs between words
+            # Common patterns in FCFS tables like "PID Burst Time Turnaround Time waiting Time"
+            is_table_row = bool(re.search(r'\S+\s{2,}\S+', line) or 
+                               re.search(r'\S+\t+\S+', line) or
+                               'PID' in line or 'Burst Time' in line or 'Turnaround Time' in line or
+                               re.match(r'^\s*\d+\s+\d+\s+\d+\s+\d+\s*$', line))
+            
+            if is_table_row:
+                if not in_table:
+                    in_table = True
+                    # If starting a new table, add any previous content
+                    if processed_content:
+                        html_content += html.escape(processed_content)
+                        processed_content = ""
+                    # Start a new table section
+                    html_content += '</pre><pre class="terminal-table">'
+                
+                # Add line to table buffer
+                table_buffer.append(line)
+            else:
+                if in_table:
+                    in_table = False
+                    # Process and add the table content with enhanced spacing
+                    if table_buffer:
+                        # Add the table content with proper escaping
+                        html_content += html.escape('\n'.join(table_buffer))
+                        table_buffer = []
+                    
+                    # Close table section and start normal terminal section
+                    html_content += '</pre><pre class="terminal">'
+                
+                # Add non-table line to regular content buffer
+                processed_content += line + '\n'
+        
+        # Handle any remaining content
+        if in_table and table_buffer:
+            html_content += html.escape('\n'.join(table_buffer))
+        elif processed_content:
+            html_content += html.escape(processed_content)
         
         html_content += """</pre>
         """
