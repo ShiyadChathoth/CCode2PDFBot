@@ -449,17 +449,30 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 
                 /* Special style for table content */
-                .terminal-table {{
+                .terminal-table {
                     font-family: 'Courier New', monospace;
-                    white-space: pre;
-                    display: inline-block;
-                    width: 100%;
-                    overflow-x: auto;
+                    border-collapse: collapse;
+                    width: auto;
+                    margin: 15px 0;
+                    table-layout: fixed;
+                }
+                .terminal-table th, .terminal-table td {
+                    text-align: left;
+                    padding: 8px 16px;
                     font-size: 14px;
                     font-feature-settings: "tnum";
                     font-variant-numeric: tabular-nums;
-                    letter-spacing: 0.4ch; /* Increase letter spacing for better column alignment */
-                }}
+                    white-space: nowrap;
+                    min-width: 60px;
+                }
+                .terminal-table th {
+                    background-color: #f2f2f2;
+                    font-weight: bold;
+                    border-bottom: 2px solid #ddd;
+                }
+                .terminal-table td {
+                    border-bottom: 1px solid #f0f0f0;
+                }
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
                 
@@ -487,50 +500,75 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         for entry in terminal_log:
             terminal_content += entry
         
-        # Process terminal content to detect and enhance table-like structures
+        # Process terminal content to detect and convert table-like structures to HTML tables
         processed_content = ""
         lines = terminal_content.split('\n')
         in_table = False
         table_buffer = []
+        table_header = []
         
         for line in lines:
             # Detect table headers or rows by checking for multiple spaces or tabs between words
             # Common patterns in FCFS tables like "PID Burst Time Turnaround Time waiting Time"
-            is_table_row = bool(re.search(r'\S+\s{2,}\S+', line) or 
-                               re.search(r'\S+\t+\S+', line) or
-                               'PID' in line or 'Burst Time' in line or 'Turnaround Time' in line or
-                               re.match(r'^\s*\d+\s+\d+\s+\d+\s+\d+\s*$', line))
+            is_table_header = bool('PID' in line and ('Burst Time' in line or 'Turnaround Time' in line or 'waiting Time' in line))
+            is_table_row = bool(re.match(r'^\s*\d+\s+\d+\s+\d+\s+\d+\s*$', line) or 
+                              (re.search(r'\S+\s{2,}\S+', line) and not is_table_header))
             
-            if is_table_row:
+            if is_table_header or is_table_row:
                 if not in_table:
                     in_table = True
                     # If starting a new table, add any previous content
                     if processed_content:
                         html_content += html.escape(processed_content)
                         processed_content = ""
-                    # Start a new table section
-                    html_content += '</pre><pre class="terminal-table">'
+                    
+                    # Start a new HTML table
+                    html_content += '</pre><table class="terminal-table">'
+                    
+                    # If this is a header row, process it specially
+                    if is_table_header:
+                        # Split the header by multiple spaces or tabs
+                        table_header = re.split(r'\s{2,}|\t+', line.strip())
+                        html_content += '<thead><tr>'
+                        for header in table_header:
+                            html_content += f'<th>{html.escape(header.strip())}</th>'
+                        html_content += '</tr></thead><tbody>'
+                        continue  # Skip adding this line to the table buffer
                 
-                # Add line to table buffer
-                table_buffer.append(line)
+                # For data rows, add to table buffer
+                if is_table_row:
+                    table_buffer.append(line.strip())
             else:
                 if in_table:
                     in_table = False
-                    # Process and add the table content with enhanced spacing
+                    # Process and add the table content as HTML table rows
                     if table_buffer:
-                        # Add the table content with proper escaping
-                        html_content += html.escape('\n'.join(table_buffer))
+                        for row in table_buffer:
+                            # Split the row by multiple spaces or tabs
+                            cells = re.split(r'\s{2,}|\t+', row)
+                            html_content += '<tr>'
+                            for cell in cells:
+                                html_content += f'<td>{html.escape(cell.strip())}</td>'
+                            html_content += '</tr>'
                         table_buffer = []
                     
-                    # Close table section and start normal terminal section
-                    html_content += '</pre><pre class="terminal">'
+                    # Close table and start normal terminal section
+                    html_content += '</tbody></table><pre class="terminal">'
                 
                 # Add non-table line to regular content buffer
                 processed_content += line + '\n'
         
         # Handle any remaining content
         if in_table and table_buffer:
-            html_content += html.escape('\n'.join(table_buffer))
+            # Process any remaining table rows
+            for row in table_buffer:
+                # Split the row by multiple spaces or tabs
+                cells = re.split(r'\s{2,}|\t+', row)
+                html_content += '<tr>'
+                for cell in cells:
+                    html_content += f'<td>{html.escape(cell.strip())}</td>'
+                html_content += '</tr>'
+            html_content += '</tbody></table>'
         elif processed_content:
             html_content += html.escape(processed_content)
         
