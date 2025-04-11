@@ -378,109 +378,6 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     
     return RUNNING
 
-def format_table_with_monospace(terminal_content):
-    """Format tables in the terminal output using monospace HTML."""
-    lines = terminal_content.splitlines()
-    formatted_lines = []
-    in_table = False
-    table_start_line = 0
-    table_headers = []
-    table_data = []
-    
-    # First pass: identify tables and collect data
-    for i, line in enumerate(lines):
-        # Check for table header line with PID and Time columns
-        if re.search(r'\bPID\b.*\bBurst\s*Time\b.*\bTurnaround\s*Time\b.*\bWaiting\s*Time\b', line, re.IGNORECASE):
-            in_table = True
-            table_start_line = i
-            # Extract headers using regex to handle variable spacing
-            headers = re.findall(r'\b(\w+(?:\s+\w+)*)\b', line)
-            table_headers = headers
-            table_data = []
-            continue
-        
-        # Check if this is a data row in the table (starts with a number followed by spaces and more numbers)
-        if in_table and re.match(r'^\s*\d+\s+\d+', line):
-            # Extract numbers from the line
-            numbers = re.findall(r'\d+', line)
-            if len(numbers) >= 3:  # At least PID, Burst Time, and one other column
-                table_data.append(numbers)
-            continue
-        
-        # Check if we're exiting the table (empty line or text that doesn't match table format)
-        if in_table and (line.strip() == "" or "Average" in line or not re.match(r'^\s*\d+\s+\d+', line)):
-            # We've reached the end of the table, now format it
-            if table_headers and table_data:
-                # Calculate column widths based on the longest entry in each column
-                col_widths = [len(header) for header in table_headers]
-                
-                # Update column widths based on data
-                for row in table_data:
-                    for j, val in enumerate(row):
-                        if j < len(col_widths) and len(val) > col_widths[j]:
-                            col_widths[j] = len(val)
-                
-                # Add padding to column widths
-                col_widths = [width + 2 for width in col_widths]
-                
-                # Format the header
-                header_line = ""
-                for j, header in enumerate(table_headers):
-                    if j < len(col_widths):
-                        header_line += header.ljust(col_widths[j])
-                
-                # Replace the original header line
-                formatted_lines.append(header_line)
-                
-                # Format the data rows
-                for row in table_data:
-                    data_line = ""
-                    for j, val in enumerate(row):
-                        if j < len(col_widths):
-                            data_line += val.ljust(col_widths[j])
-                    formatted_lines.append(data_line)
-                
-                # Continue with non-table lines
-                in_table = False
-                continue
-    
-        # For non-table lines or if we're not in a table, keep them as is
-        if not in_table:
-            formatted_lines.append(line)
-    
-    # Handle case where table continues to the end of the content
-    if in_table and table_headers and table_data:
-        # Calculate column widths
-        col_widths = [len(header) for header in table_headers]
-        
-        # Update column widths based on data
-        for row in table_data:
-            for j, val in enumerate(row):
-                if j < len(col_widths) and len(val) > col_widths[j]:
-                    col_widths[j] = len(val)
-        
-        # Add padding to column widths
-        col_widths = [width + 2 for width in col_widths]
-        
-        # Format the header
-        header_line = ""
-        for j, header in enumerate(table_headers):
-            if j < len(col_widths):
-                header_line += header.ljust(col_widths[j])
-        
-        # Replace the original header line
-        formatted_lines.append(header_line)
-        
-        # Format the data rows
-        for row in table_data:
-            data_line = ""
-            for j, val in enumerate(row):
-                if j < len(col_widths):
-                    data_line += val.ljust(col_widths[j])
-            formatted_lines.append(data_line)
-    
-    return "\n".join(formatted_lines)
-
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
@@ -499,14 +396,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 entry['message'] == 'Program execution completed.'
             )
         ]
-        
-        # Combine all terminal log entries to create exact terminal output
-        terminal_content = ""
-        for entry in terminal_log:
-            terminal_content += entry
-        
-        # Process the terminal content to properly format tables
-        formatted_terminal_content = format_table_with_monospace(terminal_content)
         
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
@@ -569,8 +458,17 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <pre class="source-code"><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
-            <pre class="terminal">{html.escape(formatted_terminal_content)}</pre>
-            
+            <pre class="terminal">"""
+        
+        # Combine all terminal log entries to create exact terminal output
+        terminal_content = ""
+        for entry in terminal_log:
+            terminal_content += entry
+        
+        # Preserve exact spacing and formatting
+        html_content += html.escape(terminal_content)
+        
+        html_content += """</pre>
         """
         
         # Add only the system messages for compilation success and program completion
