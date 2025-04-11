@@ -404,8 +404,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
             <pre><code>{html.escape(code)}</code></pre>
-            
-            <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
             <div class="terminal-view">
                 {reconstruct_terminal_view(context)}
             </div>
@@ -449,6 +447,7 @@ def reconstruct_terminal_view(context):
         # Double tab width for better PDF readability while maintaining alignment
         raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
         return f"""
+         <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
         <div style="
             font-family: 'Courier New', monospace;
             white-space: pre;
