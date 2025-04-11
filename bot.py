@@ -454,13 +454,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .program-title {{ 
                     font-size: 32px; /* Increased from 24px */
                     font-weight: bold; /* Added bold */
-                    color: #0066cc; 
+                    color: #000000;
                     margin-bottom: 15px; /* Increased from 5px */
                     text-align: center;
                     padding: 15px; /* Increased from 10px */
-                    background-color: #f0f8ff; /* Lighter blue background */
+                    background-color: #FFFFFF;/* Lighter blue background */
                     border-radius: 8px; /* Increased from 5px */
-                    border: 2px solid #0066cc; /* Added border */
+                    color: #000000;
                     box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* Added shadow */
                     text-transform: uppercase; /* Added uppercase */
                     letter-spacing: 1px; /* Added letter spacing */
