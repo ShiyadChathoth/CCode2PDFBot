@@ -478,10 +478,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             </style>
         </head>
         <body>
-            <h1>Source Code</h1>
+            <h1><u><strong>SOURCE CODE</strong></u></h1>
             <pre><code>{html.escape(code)}</code></pre>
             
-            <h1>Terminal View</h1>
+         <h1><u><strong>OUTPUT</strong></u></h1>
             <div class="terminal-view">
                 {terminal_view}
             </div>
