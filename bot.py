@@ -377,10 +377,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 .program-title {{
-                    font-size: 24px;
+                    font-size: 30px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
+                    text-decoration: underline;
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
