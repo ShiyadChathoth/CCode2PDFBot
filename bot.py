@@ -416,8 +416,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
+        # Generate sanitized filename from title
+        # Replace invalid filename characters with underscores and ensure it ends with .pdf
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        pdf_filename = f"{sanitized_title}.pdf"
+        
         # Generate PDF
-        pdf_filename = "output.pdf"
         subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
 
         # Send PDF to user
