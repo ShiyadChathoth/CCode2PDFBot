@@ -449,19 +449,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 
                 /* Special style for table content */
-                .terminal-table { 
+                .terminal-table {{ 
                     font-family: 'Courier New', monospace;
                     border-collapse: collapse;
                     width: 100%;
                     margin: 15px 0;
                     table-layout: fixed;
-                }
+                }}
                 /* Fixed column widths for FCFS table */
-                .terminal-table col.col-pid { width: 50px; }
-                .terminal-table col.col-burst { width: 100px; }
-                .terminal-table col.col-turnaround { width: 150px; }
-                .terminal-table col.col-waiting { width: 120px; }
-                .terminal-table th, .terminal-table td { 
+                .terminal-table col.col-pid {{ width: 50px; }}
+                .terminal-table col.col-burst {{ width: 100px; }}
+                .terminal-table col.col-turnaround {{ width: 150px; }}
+                .terminal-table col.col-waiting {{ width: 120px; }}
+                .terminal-table th, .terminal-table td {{ 
                     text-align: left;
                     padding: 4px 8px;
                     font-size: 14px;
@@ -471,28 +471,28 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     overflow: hidden;
                     background-color: transparent !important;
                     border: none;
-                }
-                .terminal-table tr { 
+                }}
+                .terminal-table tr {{ 
                     background-color: transparent !important;
-                }
-                .terminal-table th { 
+                }}
+                .terminal-table th {{ 
                     font-weight: normal;
                     border-bottom: none;
-                }
-                .terminal-table td { 
+                }}
+                .terminal-table td {{ 
                     border-bottom: none;
-                }
-                .system { background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }
-                .timestamp { color: #7f8c8d; font-size: 0.8em; }
+                }}
+                .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
+                .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
                 
-                @media print {
-                    .source-code { 
+                @media print {{
+                    .source-code {{ 
                         page-break-inside: avoid;
                         max-height: none; /* Remove height limit for printing */
-                    }
-                    .terminal { page-break-before: always; }
-                    h2 { page-break-before: always; }
-                }
+                    }}
+                    .terminal {{ page-break-before: always; }}
+                    h2 {{ page-break-before: always; }}
+                }}
             </style>
         </head>
         <body>
