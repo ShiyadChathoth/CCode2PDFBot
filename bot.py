@@ -449,14 +449,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 
                 /* Special style for table content */
-                .terminal-table {
+                .terminal-table {{ 
                     font-family: 'Courier New', monospace;
                     border-collapse: collapse;
                     width: auto;
                     margin: 15px 0;
                     table-layout: fixed;
-                }
-                .terminal-table th, .terminal-table td {
+                }}
+                .terminal-table th, .terminal-table td {{ 
                     text-align: left;
                     padding: 8px 16px;
                     font-size: 14px;
@@ -464,15 +464,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-variant-numeric: tabular-nums;
                     white-space: nowrap;
                     min-width: 60px;
-                }
-                .terminal-table th {
+                }}
+                .terminal-table th {{ 
                     background-color: #f2f2f2;
                     font-weight: bold;
                     border-bottom: 2px solid #ddd;
-                }
-                .terminal-table td {
+                }}
+                .terminal-table td {{ 
                     border-bottom: 1px solid #f0f0f0;
-                }
+                }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
                 
