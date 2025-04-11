@@ -436,14 +436,25 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Reconstruct terminal output with proper tab alignment"""
+    """Preserve exact terminal formatting with tabs"""
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
         raw_output = ''.join(terminal_log)
-        # Convert tabs to 8 spaces for consistent alignment
-        raw_output = raw_output.expandtabs(8)
-        return f"<pre>{html.escape(raw_output)}</pre>"
+        # Double tab width for better PDF readability while maintaining alignment
+        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+        return f"""
+        <div style="
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: 12px;
+            line-height: 1.2;
+            background: #f8f8f8;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        ">{html.escape(raw_output)}</div>
+        """
     
     return "<pre>No terminal output available</pre>"
     
