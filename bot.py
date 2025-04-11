@@ -393,11 +393,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     -moz-tab-size: 8;
                     -o-tab-size: 8;
                     background: #FFFFFF;
-                    padding: 10px;
+                    padding: 5px;
                     border-radius: 3px;
                 }}
                 .terminal-view {{
-                    margin: 3px 0;
+                    margin: 10px 0;
                 }}
             </style>
         </head>
