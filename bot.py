@@ -74,6 +74,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
     context.user_data['terminal_log'] = []  # Raw terminal output for exact formatting
     context.user_data['program_completed'] = False  # Flag to track if program has completed
+    context.user_data['prompts'] = []  # Store all prompts separately
     
     # Detect algorithm type from code
     algorithm_type = detect_algorithm_type(code)
@@ -221,6 +222,7 @@ async def read_process_output(update: Update, context: CallbackContext):
     execution_log = context.user_data['execution_log']
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
+    prompts = context.user_data['prompts']
     
     # Flag to track if we've seen any output that might indicate input is needed
     output_seen = False
@@ -361,6 +363,7 @@ def process_output_chunk(context, buffer, update):
     """Process the output buffer, extracting complete lines and preserving partial lines."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
+    prompts = context.user_data['prompts']
     
     # Split the buffer into lines, preserving the line endings
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
@@ -384,7 +387,10 @@ def process_output_chunk(context, buffer, update):
             is_prompt = (
                 line_stripped.rstrip().endswith((':','>','?')) or
                 re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
-                "number" in line_stripped.lower()
+                "number" in line_stripped.lower() or
+                "burst time" in line_stripped.lower() or
+                "process" in line_stripped.lower() or
+                "size" in line_stripped.lower()
             )
             
             # Add to execution log with appropriate type
@@ -396,6 +402,10 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
+            
+            # Store prompts separately for better display
+            if is_prompt:
+                prompts.append(line_stripped)
             
             # Display to user with appropriate prefix
             prefix = "Program prompt:" if is_prompt else "Program output:"
@@ -481,6 +491,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program")
         algorithm_type = context.user_data.get('algorithm_type', 'C Program')
+        prompts = context.user_data.get('prompts', [])
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
@@ -497,11 +508,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Extract program inputs, outputs, and prompts
         inputs = [entry for entry in execution_log if entry['type'] == 'input']
         outputs = [entry for entry in execution_log if entry['type'] == 'output']
-        prompts = [entry for entry in execution_log if entry['type'] == 'prompt']
+        prompts_from_log = [entry for entry in execution_log if entry['type'] == 'prompt']
         errors = [entry for entry in execution_log if entry['type'] == 'error']
         
+        # Combine prompts from both sources
+        all_prompts = prompts + [p['message'] for p in prompts_from_log if p['message'] not in prompts]
+        
         # Reconstruct terminal view based on algorithm type
-        terminal_view = reconstruct_terminal_view(context, algorithm_type)
+        terminal_view = reconstruct_terminal_view(context, algorithm_type, all_prompts)
         
         # Generate HTML content for the PDF with the exact format from the example
         html_content = f"""
@@ -639,6 +653,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 tr:nth-child(even) {{ 
                     background-color: #f9f9f9; 
                 }}
+                
+                /* Prompt styling */
+                .prompt {{
+                    color: #0066cc;
+                    font-weight: bold;
+                }}
             </style>
         </head>
         <body>
@@ -713,7 +733,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
-def reconstruct_terminal_view(context, algorithm_type):
+def reconstruct_terminal_view(context, algorithm_type, all_prompts):
     """Reconstruct the terminal view from execution log based on algorithm type."""
     execution_log = context.user_data['execution_log']
     
@@ -728,45 +748,29 @@ def reconstruct_terminal_view(context, algorithm_type):
     
     # Process based on algorithm type
     if algorithm_type in ["FCFS", "SJF", "Priority", "Round Robin"]:
-        return reconstruct_cpu_scheduling_view(terminal_entries)
+        return reconstruct_cpu_scheduling_view(terminal_entries, all_prompts)
     elif algorithm_type in ["Best Fit", "Worst Fit", "First Fit", "Memory Management"]:
-        return reconstruct_memory_management_view(terminal_entries)
+        return reconstruct_memory_management_view(terminal_entries, all_prompts)
     else:
         # Generic terminal view for other programs
-        return reconstruct_generic_terminal_view(terminal_entries)
+        return reconstruct_generic_terminal_view(terminal_entries, all_prompts)
 
-def reconstruct_cpu_scheduling_view(terminal_entries):
+def reconstruct_cpu_scheduling_view(terminal_entries, all_prompts):
     """Reconstruct terminal view for CPU scheduling algorithms with proper table alignment."""
     html_output = []
+    
+    # First, add all prompts in order
+    for prompt in all_prompts:
+        html_output.append(f'<p class="prompt">{html.escape(prompt)}</p>')
     
     # Extract key information
     num_processes = None
     process_data = []
     
-    # First pass: extract process count and burst times
+    # Look for user inputs (responses to prompts)
     for entry in terminal_entries:
-        message = entry['message']
-        
-        # Look for number of processes
-        match = re.search(r'Enter the (?:no\.?|number) of process(?:es)?\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match and num_processes is None:
-            num_processes = int(match.group(1))
-            html_output.append(f"<p>{match.group(0)}</p>")
-            continue
-        
-        # Look for burst times
-        match = re.search(r'Enter the [Bb]urst time of process\s*(\d+)\s*:\s*(\d+)', message)
-        if match:
-            process_id = int(match.group(1))
-            burst_time = int(match.group(2))
-            
-            # Add to process data
-            while len(process_data) <= process_id:
-                process_data.append({})
-            
-            process_data[process_id]['burst'] = burst_time
-            html_output.append(f"<p>{match.group(0)}</p>")
-            continue
+        if entry['type'] == 'input':
+            html_output.append(f'<p>{html.escape(entry["message"])}</p>')
     
     # Look for "Order of execution" line
     order_line = None
@@ -776,12 +780,12 @@ def reconstruct_cpu_scheduling_view(terminal_entries):
             break
     
     if order_line:
-        html_output.append(f"<p>{order_line}</p>")
+        html_output.append(f'<p class="prompt">{html.escape(order_line)}</p>')
         
         # Extract the execution order (P0->P1->P2->P3)
         match = re.search(r'P\d+(?:->P\d+)+', order_line)
         if match:
-            html_output.append(f"<p>{match.group(0)}</p>")
+            html_output.append(f'<p>{html.escape(match.group(0))}</p>')
     
     # Look for table header and data
     table_data = []
@@ -825,66 +829,26 @@ def reconstruct_cpu_scheduling_view(terminal_entries):
             return "\n".join(html_output)
     
     # If we couldn't find a table structure, display the raw output
+    # Make sure we don't duplicate prompts
+    existing_prompts = set(all_prompts)
     for entry in terminal_entries:
-        html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+        if entry['type'] == 'output' or (entry['type'] == 'prompt' and entry['message'] not in existing_prompts):
+            html_output.append(f'<p>{html.escape(entry["message"])}</p>')
     
     return "\n".join(html_output)
 
-def reconstruct_memory_management_view(terminal_entries):
+def reconstruct_memory_management_view(terminal_entries, all_prompts):
     """Reconstruct terminal view for memory management algorithms with proper alignment."""
     html_output = []
     
-    # Extract key information
-    num_blocks = None
-    num_files = None
-    blocks = []
-    files = []
+    # First, add all prompts in order
+    for prompt in all_prompts:
+        html_output.append(f'<p class="prompt">{html.escape(prompt)}</p>')
     
-    # First pass: extract blocks and files
+    # Look for user inputs (responses to prompts)
     for entry in terminal_entries:
-        message = entry['message']
-        
-        # Look for number of blocks
-        match = re.search(r'Enter the (?:no\.?|number) of blocks\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match and num_blocks is None:
-            num_blocks = int(match.group(1))
-            html_output.append(f"<p>{match.group(0)}</p>")
-            continue
-        
-        # Look for number of files
-        match = re.search(r'Enter the (?:no\.?|number) of files\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match and num_files is None:
-            num_files = int(match.group(1))
-            html_output.append(f"<p>{match.group(0)}</p>")
-            continue
-        
-        # Look for block sizes
-        match = re.search(r'Block\s*(\d+)\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match:
-            block_id = int(match.group(1))
-            block_size = int(match.group(2))
-            
-            # Add to blocks list
-            while len(blocks) < block_id:
-                blocks.append(0)
-            
-            blocks.append(block_size)
-            html_output.append(f"<p>{match.group(0)}</p>")
-            continue
-        
-        # Look for file sizes
-        match = re.search(r'File\s*(\d+)\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match:
-            file_id = int(match.group(1))
-            file_size = int(match.group(2))
-            
-            # Add to files list
-            while len(files) < file_id:
-                files.append(0)
-            
-            files.append(file_size)
-            html_output.append(f"<p>{match.group(0)}</p>")
-            continue
+        if entry['type'] == 'input':
+            html_output.append(f'<p>{html.escape(entry["message"])}</p>')
     
     # Look for allocation results
     allocation_results = []
@@ -896,14 +860,14 @@ def reconstruct_memory_management_view(terminal_entries):
         if match:
             file_size = match.group(1)
             partition = match.group(2)
-            allocation_results.append(f"<p>File Size {file_size} is put in {partition} partition</p>")
+            allocation_results.append(f'<p>{html.escape(message)}</p>')
             continue
         
         # Look for "must wait" messages
         match = re.search(r'File Size\s*(\d+)\s*must wait', message, re.IGNORECASE)
         if match:
             file_size = match.group(1)
-            allocation_results.append(f"<p>File Size {file_size} must wait</p>")
+            allocation_results.append(f'<p>{html.escape(message)}</p>')
             continue
     
     # Add allocation results if found
@@ -911,25 +875,39 @@ def reconstruct_memory_management_view(terminal_entries):
         html_output.extend(allocation_results)
     else:
         # If we couldn't extract structured data, just show all terminal output
+        # Make sure we don't duplicate prompts
+        existing_prompts = set(all_prompts)
         for entry in terminal_entries:
-            if entry['message'] not in [line.strip("<p>").strip("</p>") for line in html_output]:
-                html_output.append(f"<p>{html.escape(entry['message'])}</p>")
+            if entry['type'] == 'output' or (entry['type'] == 'prompt' and entry['message'] not in existing_prompts):
+                html_output.append(f'<p>{html.escape(entry["message"])}</p>')
     
     return "\n".join(html_output)
 
-def reconstruct_generic_terminal_view(terminal_entries):
+def reconstruct_generic_terminal_view(terminal_entries, all_prompts):
     """Reconstruct terminal view for generic programs with proper alignment."""
     html_output = []
+    
+    # First, add all prompts in order
+    for prompt in all_prompts:
+        html_output.append(f'<p class="prompt">{html.escape(prompt)}</p>')
     
     # Check if there's a table structure in the output
     table_header = None
     table_rows = []
+    
+    # Make sure we don't duplicate prompts
+    existing_prompts = set(all_prompts)
     
     for entry in terminal_entries:
         message = entry['message']
         
         # Skip user inputs to avoid duplication
         if entry['type'] == 'input':
+            html_output.append(f'<p>{html.escape(message)}</p>')
+            continue
+        
+        # Skip prompts that are already displayed
+        if entry['type'] == 'prompt' and message in existing_prompts:
             continue
         
         # Check for potential table headers with multiple columns
@@ -947,7 +925,7 @@ def reconstruct_generic_terminal_view(terminal_entries):
             continue
         
         # Regular output line
-        html_output.append(f"<p>{html.escape(message)}</p>")
+        html_output.append(f'<p>{html.escape(message)}</p>')
     
     # If we found a table structure, format it properly
     if table_header and table_rows:
