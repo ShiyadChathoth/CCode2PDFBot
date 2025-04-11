@@ -575,24 +575,32 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             subprocess.run(["apt-get", "update"], check=True)
             subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], check=True)
         
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", "output.pdf"])
+        # Create safe filename from program title
+        safe_filename = re.sub(r'[^\w\s-]', '', program_title).strip().replace(' ', '_')
+        if not safe_filename:
+            safe_filename = "program_execution"
         
-        # Send PDF to user
-        with open('output.pdf', 'rb') as pdf_file:
+        pdf_filename = f"{safe_filename}.pdf"
+        html_filename = f"{safe_filename}.html"
+        
+        # Generate PDF with title-based filename
+        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+        
+        # Send PDF to user with title-based filename
+        with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
-                filename="program_execution.pdf",
+                filename=pdf_filename,
                 caption=f"Here's the execution report of your C code: {program_title}"
             )
         
-        # Also send HTML file for better viewing
+        # Also send HTML file for better viewing with title-based filename
         with open('output.html', 'rb') as html_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=html_file,
-                filename="program_execution.html",
+                filename=html_filename,
                 caption="HTML version of the execution report for better viewing."
             )
     except Exception as e:
@@ -872,8 +880,14 @@ async def cleanup(context: CallbackContext):
             process.kill()
             await process.wait()
     
-    for file in ["temp.c", "temp", "output.pdf", "output.html"]:
+    # Clean up all generated files including title-based filenames
+    for file in ["temp.c", "temp", "output.html"]:
         if os.path.exists(file):
+            os.remove(file)
+    
+    # Clean up any PDF files that might have been generated
+    for file in os.listdir():
+        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
             os.remove(file)
     
     context.user_data.clear()
