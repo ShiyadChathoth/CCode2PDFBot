@@ -452,13 +452,18 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 h1 {{ color: #333; }}
                 .program-title {{ 
-                    font-size: 24px; 
+                    font-size: 32px; /* Increased from 24px */
+                    font-weight: bold; /* Added bold */
                     color: #0066cc; 
-                    margin-bottom: 5px; 
+                    margin-bottom: 15px; /* Increased from 5px */
                     text-align: center;
-                    padding: 10px;
-                    background-color: #f5f5f5;
-                    border-radius: 5px;
+                    padding: 15px; /* Increased from 10px */
+                    background-color: #f0f8ff; /* Lighter blue background */
+                    border-radius: 8px; /* Increased from 5px */
+                    border: 2px solid #0066cc; /* Added border */
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* Added shadow */
+                    text-transform: uppercase; /* Added uppercase */
+                    letter-spacing: 1px; /* Added letter spacing */
                 }}
                 pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                 .terminal {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; font-family: monospace; }}
