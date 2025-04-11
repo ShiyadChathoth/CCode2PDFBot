@@ -503,8 +503,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     background: #ffffff !important;
                     color: #000000;
                 }}
-                .system { background-color: #ffffff; padding: 10px; border-left: 4px solid #000000; margin: 10px 0; white-space: pre-wrap; }
-                .timestamp { color: #000000; font-size: 0.8em; }
+                .system {{ background-color: #ffffff; padding: 10px; border-left: 4px solid #000000; margin: 10px 0; white-space: pre-wrap; }}
+                .timestamp {{ color: #000000; font-size: 0.8em; }}
                 
                 @media print {{
                     .source-code {{ 
