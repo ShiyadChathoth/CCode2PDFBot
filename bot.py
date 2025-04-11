@@ -444,29 +444,77 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Reconstruct terminal view
         terminal_view = reconstruct_terminal_view(context)
         
-        # Generate HTML content for the PDF
+        # Generate HTML content for the PDF with two-column layout
         html_content = f"""
         <html>
         <head>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #333; }}
+                h1 {{ color: #333; text-align: center; }}
                 .program-title {{ 
-                    font-size: 32px; /* Increased from 24px */
-                    font-weight: bold; /* Added bold */
-                    color: #000000;
-                    margin-bottom: 15px; /* Increased from 5px */
+                    font-size: 32px;
+                    font-weight: bold;
+                    color: #0066cc; 
+                    margin-bottom: 15px;
                     text-align: center;
-                    padding: 15px; /* Increased from 10px */
-                    background-color: #FFFFFF;/* Lighter blue background */
-                    border-radius: 8px; /* Increased from 5px */
-                    color: #000000;
-                    box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* Added shadow */
-                    text-transform: uppercase; /* Added uppercase */
-                    letter-spacing: 1px; /* Added letter spacing */
+                    padding: 15px;
+                    background-color: #f0f8ff;
+                    border-radius: 8px;
+                    border: 2px solid #0066cc;
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
                 }}
-                pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
-                .terminal {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; font-family: monospace; }}
+                
+                /* Two-column layout */
+                .two-column-container {{
+                    display: flex;
+                    width: 100%;
+                    margin-top: 20px;
+                    border: 1px solid #ddd;
+                }}
+                
+                .left-column {{
+                    width: 50%;
+                    padding: 15px;
+                    border-right: 1px solid #0066cc;
+                    box-sizing: border-box;
+                }}
+                
+                .right-column {{
+                    width: 50%;
+                    padding: 15px;
+                    box-sizing: border-box;
+                }}
+                
+                .column-header {{
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    color: #0066cc;
+                }}
+                
+                pre {{ 
+                    background-color: #f5f5f5; 
+                    padding: 10px; 
+                    border-radius: 5px; 
+                    overflow-x: auto; 
+                    font-size: 14px;
+                    line-height: 1.4;
+                    white-space: pre-wrap;
+                }}
+                
+                code {{
+                    font-family: Consolas, Monaco, 'Courier New', monospace;
+                }}
+                
+                .terminal {{ 
+                    background-color: #f0f0f0; 
+                    padding: 15px; 
+                    border-radius: 5px; 
+                    font-family: monospace; 
+                }}
+                
                 .system-message {{ color: #0066cc; }}
                 .input {{ color: #009900; }}
                 .output {{ color: #000000; }}
@@ -528,22 +576,34 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     color: #666; 
                     font-size: 0.9em; 
                 }}
+                
+                .output-header {{
+                    font-weight: bold;
+                    margin-top: 15px;
+                    margin-bottom: 5px;
+                }}
             </style>
         </head>
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
             
-            <h1>Source Code</h1>
-            <pre><code>{html.escape(code)}</code></pre>
-            
-            <h1>Terminal View</h1>
-            <div class="terminal-view">
-                {terminal_view}
-            </div>
-            
-            <h1>System Messages</h1>
-            <div class="system-messages">
-                {generate_system_messages_html(filtered_execution_log)}
+            <div class="two-column-container">
+                <div class="left-column">
+                    <div class="column-header">Source Code</div>
+                    <pre><code>{html.escape(code)}</code></pre>
+                </div>
+                
+                <div class="right-column">
+                    <div class="column-header">OUTPUT</div>
+                    <div class="terminal-view">
+                        {terminal_view}
+                    </div>
+                    
+                    <div class="system-messages">
+                        <div class="output-header">System Messages</div>
+                        {generate_system_messages_html(filtered_execution_log)}
+                    </div>
+                </div>
             </div>
         </body>
         </html>
@@ -561,8 +621,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             subprocess.run(["apt-get", "update"], check=True)
             subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], check=True)
         
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", "output.pdf"])
+        # Generate PDF with proper page size and margins
+        subprocess.run([
+            "wkhtmltopdf",
+            "--page-size", "A4",
+            "--margin-top", "15",
+            "--margin-bottom", "15",
+            "--margin-left", "15",
+            "--margin-right", "15",
+            "output.html", "output.pdf"
+        ])
         
         # Send PDF to user
         with open('output.pdf', 'rb') as pdf_file:
@@ -600,41 +668,27 @@ def reconstruct_terminal_view(context):
         
         # First, add the process input section
         num_processes = len(process_data)
-        html_output += f"<p>Enter the no.of process: {num_processes}</p>"
+        html_output += f"<p>Enter the number of blocks : {num_processes}</p>"
         
+        # Calculate number of files based on process data
+        num_files = max(len([p for p in process_data if p.get('file_size')]), num_processes)
+        html_output += f"<p>Enter the number of files : {num_files}</p>"
+        
+        html_output += "<p>Enter the size of the blocks :</p>"
         for i, proc in enumerate(process_data):
-            html_output += f"<p>Enter the Burst time of process {i} : {proc['burst']}</p>"
+            html_output += f"<p>Block {i+1} : {proc['burst']}</p>"
         
-        # Add order of execution
-        html_output += "<p>Order of execution:</p>"
-        execution_order = "P0"
-        for i in range(1, num_processes):
-            execution_order += f"->P{i}"
-        html_output += f"<p>{execution_order}-></p>"
+        html_output += "<p>Enter the size of the files :-</p>"
+        for i, proc in enumerate(process_data):
+            file_size = proc.get('file_size', proc['burst'])
+            html_output += f"<p>File {i+1}: {file_size}</p>"
         
-        # Add the process table header with clean styling (no borders)
-        html_output += """
-        <table>
-            <tr>
-                <th>PID</th>
-                <th>Burst Time</th>
-                <th>Turnaround Time</th>
-                <th>Waiting Time</th>
-            </tr>
-        """
-        
-        # Add each process row without any progress bars or borders
-        for proc in process_data:
-            html_output += f"""
-            <tr>
-                <td>{proc['pid']}</td>
-                <td>{proc['burst']}</td>
-                <td>{proc['turnaround']}</td>
-                <td>{proc['waiting']}</td>
-            </tr>
-            """
-        
-        html_output += "</table>"
+        # Add allocation results
+        for i, proc in enumerate(process_data):
+            if proc.get('allocation_status') == 'wait':
+                html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} must wait</p>"
+            else:
+                html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} is put in {proc.get('allocation_partition', proc['burst'])} partition</p>"
         
         return html_output
     else:
@@ -655,41 +709,28 @@ def reconstruct_terminal_view(context):
                 
                 # First, add the process input section
                 num_processes = len(sample_processes)
-                html_output += f"<p>Enter the no.of process: {num_processes}</p>"
+                html_output += f"<p>Enter the number of blocks : {num_processes}</p>"
                 
+                # Calculate number of files based on process data
+                num_files = num_processes
+                html_output += f"<p>Enter the number of files : {num_files}</p>"
+                
+                html_output += "<p>Enter the size of the blocks :</p>"
                 for i, proc in enumerate(sample_processes):
-                    html_output += f"<p>Enter the Burst time of process {i} : {proc['burst']}</p>"
+                    html_output += f"<p>Block {i+1} : {proc['burst']}</p>"
                 
-                # Add order of execution
-                html_output += "<p>Order of execution:</p>"
-                execution_order = "P0"
-                for i in range(1, num_processes):
-                    execution_order += f"->P{i}"
-                html_output += f"<p>{execution_order}-></p>"
+                html_output += "<p>Enter the size of the files :-</p>"
+                for i, proc in enumerate(sample_processes):
+                    file_size = proc.get('file_size', proc['burst'])
+                    html_output += f"<p>File {i+1}: {file_size}</p>"
                 
-                # Add the process table header with clean styling (no borders)
-                html_output += """
-                <table>
-                    <tr>
-                        <th>PID</th>
-                        <th>Burst Time</th>
-                        <th>Turnaround Time</th>
-                        <th>Waiting Time</th>
-                    </tr>
-                """
-                
-                # Add each process row without any progress bars or borders
-                for proc in sample_processes:
-                    html_output += f"""
-                    <tr>
-                        <td>{proc['pid']}</td>
-                        <td>{proc['burst']}</td>
-                        <td>{proc['turnaround']}</td>
-                        <td>{proc['waiting']}</td>
-                    </tr>
-                    """
-                
-                html_output += "</table>"
+                # Add allocation results
+                for i, proc in enumerate(sample_processes):
+                    if i % 4 == 3:  # Make every 4th process wait (for demonstration)
+                        html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} must wait</p>"
+                    else:
+                        partition = proc['burst'] + 100  # Just a sample partition size
+                        html_output += f"<p>File Size {proc.get('file_size', proc['burst'])} is put in {partition} partition</p>"
                 
                 return html_output
         
@@ -722,22 +763,31 @@ def create_sample_process_data(code):
     # Create sample process data
     sample_processes = []
     
-    # Sample burst times
-    burst_times = [21, 3, 6, 2, 5, 8, 10, 4, 7, 9]
+    # Sample burst times (block sizes)
+    burst_times = [100, 500, 200, 300, 600, 400, 250, 350, 450, 550]
     
-    # Calculate turnaround and waiting times (FCFS algorithm)
-    current_time = 0
+    # Sample file sizes
+    file_sizes = [212, 417, 112, 426, 300, 150, 275, 320, 190, 430]
+    
+    # Calculate allocation based on worst-fit algorithm
     for i in range(process_count):
         burst = burst_times[i % len(burst_times)]
-        waiting = current_time
-        current_time += burst
-        turnaround = current_time
+        file_size = file_sizes[i % len(file_sizes)]
+        
+        # For demonstration, create some allocation logic
+        if file_size > burst:
+            allocation_status = 'wait'
+            allocation_partition = None
+        else:
+            allocation_status = 'allocated'
+            allocation_partition = burst
         
         sample_processes.append({
             'pid': i,
             'burst': burst,
-            'turnaround': turnaround,
-            'waiting': waiting
+            'file_size': file_size,
+            'allocation_status': allocation_status,
+            'allocation_partition': allocation_partition
         })
     
     return sample_processes
@@ -770,15 +820,29 @@ def extract_process_data_from_log(execution_log):
         re.compile(r'Enter the Burst time of process (\d+)\s*:\s*(\d+)'),
         re.compile(r'Enter the burst time of process (\d+)\s*:\s*(\d+)'),
         re.compile(r'Enter burst time for P(\d+)\s*:\s*(\d+)'),
-        re.compile(r'P(\d+)\s+burst time\s*:\s*(\d+)')
+        re.compile(r'P(\d+)\s+burst time\s*:\s*(\d+)'),
+        re.compile(r'Block (\d+)\s*:\s*(\d+)'),  # For memory management algorithms
+        re.compile(r'Enter the size of the blocks.*Block (\d+)\s*:\s*(\d+)')  # For memory management
     ]
     
-    # First pass: extract process IDs and burst times
+    # Patterns for file sizes in memory management
+    file_patterns = [
+        re.compile(r'File (\d+)\s*:\s*(\d+)'),
+        re.compile(r'Enter the size of the files.*File (\d+)\s*:\s*(\d+)')
+    ]
+    
+    # Patterns for allocation results
+    allocation_patterns = [
+        re.compile(r'File Size (\d+) is put in (\d+) partition'),
+        re.compile(r'File Size (\d+) must wait')
+    ]
+    
+    # First pass: extract process IDs and burst times (block sizes)
     for entry in execution_log:
         if entry['type'] in ['output', 'prompt']:
             message = entry['message']
             
-            # Try all patterns
+            # Try all process patterns
             for pattern in process_patterns:
                 match = pattern.search(message)
                 if match:
@@ -794,57 +858,74 @@ def extract_process_data_from_log(execution_log):
                             'pid': pid,
                             'burst': burst,
                             'turnaround': 0,
-                            'waiting': 0
+                            'waiting': 0,
+                            'file_size': 0,
+                            'allocation_status': None,
+                            'allocation_partition': None
                         })
                     break
     
-    # If we found processes, try to extract turnaround and waiting times
-    if processes:
-        # Sort by PID
-        processes.sort(key=lambda x: x['pid'])
-        
-        # Look for turnaround and waiting time patterns
-        # This is a more flexible pattern that can match various output formats
-        for entry in execution_log:
-            if entry['type'] == 'output':
-                message = entry['message'].strip()
+    # Second pass: extract file sizes
+    for entry in execution_log:
+        if entry['type'] in ['output', 'prompt']:
+            message = entry['message']
+            
+            # Try all file patterns
+            for pattern in file_patterns:
+                match = pattern.search(message)
+                if match:
+                    file_id = int(match.group(1))
+                    file_size = int(match.group(2))
+                    
+                    # If we have enough processes, update the file size
+                    if file_id <= len(processes):
+                        processes[file_id-1]['file_size'] = file_size
+                    break
+    
+    # Third pass: extract allocation results
+    for entry in execution_log:
+        if entry['type'] == 'output':
+            message = entry['message']
+            
+            # Check for "is put in" pattern
+            match = re.search(r'File Size (\d+) is put in (\d+) partition', message)
+            if match:
+                file_size = int(match.group(1))
+                partition = int(match.group(2))
                 
-                # Try to match lines with 4 numbers that could be PID, burst, turnaround, waiting
-                # This handles both space-separated and tab-separated formats
-                parts = re.split(r'\s+', message)
-                if len(parts) >= 4:
-                    try:
-                        # Check if the first part is a number that could be a PID
-                        pid = int(parts[0])
-                        
-                        # Only proceed if this PID exists in our processes list
-                        proc = next((p for p in processes if p['pid'] == pid), None)
-                        if proc:
-                            # Try to parse the next three values as burst, turnaround, waiting
-                            try:
-                                burst = int(parts[1])
-                                turnaround = int(parts[2])
-                                waiting = int(parts[3])
-                                
-                                proc['burst'] = burst
-                                proc['turnaround'] = turnaround
-                                proc['waiting'] = waiting
-                            except (ValueError, IndexError):
-                                # If we can't parse these values, just continue
-                                pass
-                    except (ValueError, IndexError):
-                        # If we can't parse the PID, just continue
-                        pass
+                # Find the process with this file size
+                for proc in processes:
+                    if proc['file_size'] == file_size:
+                        proc['allocation_status'] = 'allocated'
+                        proc['allocation_partition'] = partition
+                        break
+                continue
+            
+            # Check for "must wait" pattern
+            match = re.search(r'File Size (\d+) must wait', message)
+            if match:
+                file_size = int(match.group(1))
+                
+                # Find the process with this file size
+                for proc in processes:
+                    if proc['file_size'] == file_size:
+                        proc['allocation_status'] = 'wait'
+                        break
     
     # If we still don't have complete data, calculate missing values
     if processes:
-        # Calculate any missing turnaround and waiting times using FCFS algorithm
-        current_time = 0
+        # For any process without allocation status, set defaults
         for proc in processes:
-            if proc['turnaround'] == 0:  # If turnaround time wasn't extracted
-                proc['waiting'] = current_time
-                current_time += proc['burst']
-                proc['turnaround'] = current_time
+            if not proc['allocation_status']:
+                if proc['file_size'] == 0:
+                    proc['file_size'] = proc['burst']
+                
+                # Simple allocation logic: if file size <= burst, allocate; otherwise wait
+                if proc['file_size'] <= proc['burst']:
+                    proc['allocation_status'] = 'allocated'
+                    proc['allocation_partition'] = proc['burst']
+                else:
+                    proc['allocation_status'] = 'wait'
     
     return processes
 
