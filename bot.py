@@ -74,11 +74,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_buffer'] = ""  # Buffer for incomplete output lines
     context.user_data['terminal_log'] = []  # Raw terminal output for exact formatting
     context.user_data['program_completed'] = False  # Flag to track if program has completed
-    context.user_data['prompts'] = []  # Store all prompts separately
-    
-    # Detect algorithm type from code
-    algorithm_type = detect_algorithm_type(code)
-    context.user_data['algorithm_type'] = algorithm_type
     
     try:
         with open("temp.c", "w") as file:
@@ -162,59 +157,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
 
-def detect_algorithm_type(code):
-    """Detect the type of algorithm from the code."""
-    code_lower = code.lower()
-    
-    # Check for specific algorithm keywords
-    if "fcfs" in code_lower or "first come first serve" in code_lower:
-        return "FCFS"
-    elif "sjf" in code_lower or "shortest job first" in code_lower:
-        return "SJF"
-    elif "priority" in code_lower and "scheduling" in code_lower:
-        return "Priority"
-    elif "round robin" in code_lower or "roundrobin" in code_lower:
-        return "Round Robin"
-    elif "bestfit" in code_lower or "best fit" in code_lower:
-        return "Best Fit"
-    elif "worstfit" in code_lower or "worst fit" in code_lower:
-        return "Worst Fit"
-    elif "firstfit" in code_lower or "first fit" in code_lower:
-        return "First Fit"
-    
-    # Check for function names
-    if re.search(r'void\s+fcfs', code_lower) or re.search(r'int\s+fcfs', code_lower):
-        return "FCFS"
-    elif re.search(r'void\s+sjf', code_lower) or re.search(r'int\s+sjf', code_lower):
-        return "SJF"
-    elif re.search(r'void\s+priority', code_lower) or re.search(r'int\s+priority', code_lower):
-        return "Priority"
-    elif re.search(r'void\s+round_?robin', code_lower) or re.search(r'int\s+round_?robin', code_lower):
-        return "Round Robin"
-    elif re.search(r'void\s+best_?fit', code_lower) or re.search(r'int\s+best_?fit', code_lower):
-        return "Best Fit"
-    elif re.search(r'void\s+worst_?fit', code_lower) or re.search(r'int\s+worst_?fit', code_lower):
-        return "Worst Fit"
-    elif re.search(r'void\s+first_?fit', code_lower) or re.search(r'int\s+first_?fit', code_lower):
-        return "First Fit"
-    
-    # If no specific algorithm is detected, try to infer from code patterns
-    if "waiting time" in code_lower and "turnaround time" in code_lower:
-        if "burst" in code_lower:
-            return "FCFS"  # Default to FCFS for CPU scheduling
-    elif "memory" in code_lower and "allocation" in code_lower:
-        if "best" in code_lower:
-            return "Best Fit"
-        elif "worst" in code_lower:
-            return "Worst Fit"
-        elif "first" in code_lower:
-            return "First Fit"
-        else:
-            return "Memory Management"  # Generic memory management
-    
-    # Default to "C Program" if no specific algorithm is detected
-    return "C Program"
-
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
     output = context.user_data['output']
@@ -222,7 +164,6 @@ async def read_process_output(update: Update, context: CallbackContext):
     execution_log = context.user_data['execution_log']
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
-    prompts = context.user_data['prompts']
     
     # Flag to track if we've seen any output that might indicate input is needed
     output_seen = False
@@ -363,7 +304,6 @@ def process_output_chunk(context, buffer, update):
     """Process the output buffer, extracting complete lines and preserving partial lines."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    prompts = context.user_data['prompts']
     
     # Split the buffer into lines, preserving the line endings
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
@@ -387,11 +327,7 @@ def process_output_chunk(context, buffer, update):
             is_prompt = (
                 line_stripped.rstrip().endswith((':','>','?')) or
                 re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
-                "number" in line_stripped.lower() or
-                "burst time" in line_stripped.lower() or
-                "process" in line_stripped.lower() or
-                "size" in line_stripped.lower() or
-                "Order of execution" in line_stripped
+                "number" in line_stripped.lower()
             )
             
             # Add to execution log with appropriate type
@@ -403,10 +339,6 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
-            
-            # Store prompts separately for better display
-            if is_prompt:
-                prompts.append(line_stripped)
             
             # Display to user with appropriate prefix
             prefix = "Program prompt:" if is_prompt else "Program output:"
@@ -472,11 +404,10 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
 
 async def handle_title_input(update: Update, context: CallbackContext) -> int:
     title = update.message.text
-    algorithm_type = context.user_data.get('algorithm_type', 'C Program')
     
     if title.lower() == 'skip':
-        # Use algorithm type as default title
-        context.user_data['program_title'] = algorithm_type
+        # Use default title
+        context.user_data['program_title'] = "C Program"
     else:
         # Use user-provided title
         context.user_data['program_title'] = title
@@ -491,8 +422,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program")
-        algorithm_type = context.user_data.get('algorithm_type', 'C Program')
-        prompts = context.user_data.get('prompts', [])
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
@@ -509,16 +438,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Extract program inputs, outputs, and prompts
         inputs = [entry for entry in execution_log if entry['type'] == 'input']
         outputs = [entry for entry in execution_log if entry['type'] == 'output']
-        prompts_from_log = [entry for entry in execution_log if entry['type'] == 'prompt']
+        prompts = [entry for entry in execution_log if entry['type'] == 'prompt']
         errors = [entry for entry in execution_log if entry['type'] == 'error']
         
-        # Combine prompts from both sources
-        all_prompts = prompts + [p['message'] for p in prompts_from_log if p['message'] not in prompts]
+        # Reconstruct terminal view
+        terminal_view = reconstruct_terminal_view(execution_log)
         
-        # Reconstruct terminal view based on algorithm type
-        terminal_view = reconstruct_terminal_view(context, algorithm_type, all_prompts)
-        
-        # Generate HTML content for the PDF with the exact format from the example
+        # Generate HTML content for the PDF
         html_content = f"""
         <html>
         <head>
@@ -545,7 +471,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 
                 .program-title {{ 
-                    font-size: 32px;
+                    font-size: 36px;
                     font-weight: bold;
                     color: #0066cc; 
                     margin: 0;
@@ -623,96 +549,59 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-size: 0.9em;
                 }}
                 
-                /* Exact table styling to match screenshot */
-                .exact-table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 15px 0;
-                    font-family: Consolas, Monaco, 'Courier New', monospace;
+                /* Progress bar styling */
+                .progress-container {{
+                    display: none;
                 }}
                 
-                .exact-table th {{
-                    background-color: #f2f2f2;
-                    padding: 8px 15px;
-                    text-align: left;
-                    font-weight: normal;
+                /* Table styling */
+                table {{ 
+                    border-collapse: collapse; 
+                    width: 100%; 
+                    margin: 15px 0; 
+                    border: none; 
                 }}
                 
-                .exact-table td {{
-                    padding: 8px 15px;
-                    text-align: left;
+                th {{ 
+                    background-color: #f2f2f2; 
+                    padding: 8px; 
+                    text-align: left; 
+                    border: none; 
                 }}
                 
-                .exact-table tr:nth-child(even) {{
-                    background-color: #f9f9f9;
+                td {{ 
+                    padding: 8px; 
+                    text-align: left; 
+                    border: none; 
                 }}
                 
-                /* Ensure consistent column widths */
-                .col-pid {{ width: 15%; }}
-                .col-burst {{ width: 25%; }}
-                .col-turnaround {{ width: 30%; }}
-                .col-waiting {{ width: 30%; }}
-                
-                /* Plain text styling */
-                .plain-text {{
-                    font-family: Consolas, Monaco, 'Courier New', monospace;
-                    white-space: pre-wrap;
-                    line-height: 1.5;
-                    margin: 0;
-                    padding: 0;
-                }}
-                
-                /* Two pages per sheet layout */
-                .page {{
-                    page-break-after: always;
-                    padding: 10mm;
-                }}
-                
-                /* Last page should not have a page break */
-                .page:last-child {{
-                    page-break-after: avoid;
-                }}
-                
-                /* For two-up printing */
-                @media print {{
-                    @page {{
-                        size: A4 landscape;
-                    }}
-                    
-                    .page {{
-                        width: 50%;
-                        float: left;
-                        box-sizing: border-box;
-                    }}
+                tr:nth-child(even) {{ 
+                    background-color: #f9f9f9; 
                 }}
             </style>
         </head>
         <body>
-            <div class="page">
-                <div class="title-container">
-                    <div class="program-title">{html.escape(program_title)}</div>
+            <div class="title-container">
+                <div class="program-title">{html.escape(program_title)}</div>
+            </div>
+            
+            <div class="content-container">
+                <div class="left-column">
+                    <div class="column-header">Source Code</div>
+                    <div class="code-section">{html.escape(code)}</div>
                 </div>
                 
-                <div class="content-container">
-                    <div class="left-column">
-                        <div class="column-header">Source Code</div>
-                        <div class="code-section">{html.escape(code)}</div>
-                    </div>
-                    
-                    <div class="right-column">
-                        <div class="column-header">OUTPUT</div>
-                        <div class="output-section">
-                            {terminal_view}
-                        </div>
+                <div class="right-column">
+                    <div class="column-header">OUTPUT</div>
+                    <div class="output-section">
+                        {terminal_view}
                     </div>
                 </div>
             </div>
             
-            <div class="page">
-                <div class="system-messages">
-                    <div class="system-message-header">System Messages</div>
-                    {generate_system_messages_html(filtered_execution_log)}
-                </div>
+            <div class="system-messages">
+                <div class="system-message-header">System Messages</div>
+                {generate_system_messages_html(filtered_execution_log)}
             </div>
         </body>
         </html>
@@ -730,20 +619,18 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             subprocess.run(["apt-get", "update"], check=True)
             subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], check=True)
         
-        # Generate PDF with two pages per sheet layout
+        # Generate PDF
         subprocess.run([
             "wkhtmltopdf",
             "--page-size", "A4",
-            "--orientation", "Landscape",  # Landscape for two pages side by side
             "--margin-top", "10",
             "--margin-bottom", "10",
             "--margin-left", "10",
             "--margin-right", "10",
-            "--print-media-type",  # Use print media CSS
             "output.html", "output.pdf"
         ])
         
-        # Send PDF to user
+        # Send PDF to user with title as filename
         with open('output.pdf', 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
@@ -751,25 +638,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 filename=f"{program_title.replace(' ', '_')}.pdf",
                 caption=f"Here's the execution report of your C code: {program_title}"
             )
-        
-        # Also send HTML file for better viewing
-        with open('output.html', 'rb') as html_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=html_file,
-                filename=f"{program_title.replace(' ', '_')}.html",
-                caption="HTML version of the execution report for better viewing."
-            )
     except Exception as e:
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
 
-def reconstruct_terminal_view(context, algorithm_type, all_prompts):
-    """Reconstruct the terminal view from execution log based on algorithm type."""
-    execution_log = context.user_data['execution_log']
-    
-    # Extract all prompts and outputs in order
+def reconstruct_terminal_view(execution_log):
+    """Reconstruct the terminal view from execution log."""
+    # Extract all prompts, inputs, and outputs in order
     terminal_entries = []
     for entry in execution_log:
         if entry['type'] in ['prompt', 'output', 'input']:
@@ -778,178 +654,9 @@ def reconstruct_terminal_view(context, algorithm_type, all_prompts):
     # Sort by timestamp
     terminal_entries.sort(key=lambda x: x['timestamp'])
     
-    # Process based on algorithm type
-    if algorithm_type in ["FCFS", "SJF", "Priority", "Round Robin"]:
-        return reconstruct_cpu_scheduling_view(terminal_entries, all_prompts)
-    elif algorithm_type in ["Best Fit", "Worst Fit", "First Fit", "Memory Management"]:
-        return reconstruct_memory_management_view(terminal_entries, all_prompts)
-    else:
-        # Generic terminal view for other programs
-        return reconstruct_generic_terminal_view(terminal_entries, all_prompts)
-
-def reconstruct_cpu_scheduling_view(terminal_entries, all_prompts):
-    """Reconstruct terminal view for CPU scheduling algorithms with exact formatting from screenshot."""
-    # Extract key information
-    num_processes = None
-    process_data = []
-    burst_times = {}
-    order_line = None
-    
-    # Extract process information from terminal entries
-    for entry in terminal_entries:
-        message = entry['message']
-        
-        # Look for number of processes
-        match = re.search(r'Enter the (?:no\.?|number) of process(?:es)?\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match and num_processes is None:
-            num_processes = int(match.group(1))
-            continue
-        
-        # Look for burst times
-        match = re.search(r'Enter the [Bb]urst time of process\s*(\d+)\s*:\s*(\d+)', message)
-        if match:
-            process_id = int(match.group(1))
-            burst_time = int(match.group(2))
-            burst_times[process_id] = burst_time
-            continue
-        
-        # Look for "Order of execution" line
-        if "Order of execution" in message:
-            order_line = message
-    
-    # Create the exact format as in the screenshot
+    # Reconstruct terminal view
     html_output = []
     
-    # First add the process count prompt
-    for entry in terminal_entries:
-        if "Enter the no.of process" in entry['message']:
-            html_output.append(f'<div class="plain-text">Enter the no.of process: {num_processes}</div>')
-            break
-    
-    # Add burst time prompts in order
-    for i in range(num_processes if num_processes else 0):
-        if i in burst_times:
-            html_output.append(f'<div class="plain-text">Enter the Burst time of process {i} : {burst_times[i]}</div>')
-    
-    # Add order of execution
-    if order_line:
-        html_output.append(f'<div class="plain-text">Order of execution:</div>')
-        
-        # Extract the execution order (P0->P1->P2->P3)
-        match = re.search(r'P\d+(?:->P\d+)+', order_line)
-        if match:
-            html_output.append(f'<div class="plain-text">{match.group(0)}</div>')
-    
-    # Look for table data
-    pid_data = []
-    burst_data = []
-    turnaround_data = []
-    waiting_data = []
-    
-    for entry in terminal_entries:
-        message = entry['message']
-        # Look for rows with 4 numbers separated by spaces
-        match = re.search(r'^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$', message)
-        if match:
-            pid_data.append(match.group(1))
-            burst_data.append(match.group(2))
-            turnaround_data.append(match.group(3))
-            waiting_data.append(match.group(4))
-    
-    # Create the exact table format as in the screenshot
-    if pid_data:
-        html_output.append('<table class="exact-table">')
-        html_output.append('<tr><th>PID</th><th>Burst Time</th><th>Turnaround Time</th><th>Waiting Time</th></tr>')
-        
-        for i in range(len(pid_data)):
-            html_output.append(f'<tr><td>{pid_data[i]}</td><td>{burst_data[i]}</td><td>{turnaround_data[i]}</td><td>{waiting_data[i]}</td></tr>')
-        
-        html_output.append('</table>')
-    
-    return "\n".join(html_output)
-
-def reconstruct_memory_management_view(terminal_entries, all_prompts):
-    """Reconstruct terminal view for memory management algorithms with exact formatting."""
-    html_output = []
-    
-    # Extract key information
-    num_blocks = None
-    num_files = None
-    blocks = {}
-    files = {}
-    
-    # First pass: extract blocks and files
-    for entry in terminal_entries:
-        message = entry['message']
-        
-        # Look for number of blocks
-        match = re.search(r'Enter the (?:no\.?|number) of blocks\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match and num_blocks is None:
-            num_blocks = int(match.group(1))
-            html_output.append(f'<div class="plain-text">Enter the number of blocks : {num_blocks}</div>')
-            continue
-        
-        # Look for number of files
-        match = re.search(r'Enter the (?:no\.?|number) of files\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match and num_files is None:
-            num_files = int(match.group(1))
-            html_output.append(f'<div class="plain-text">Enter the number of files : {num_files}</div>')
-            continue
-        
-        # Look for block sizes
-        match = re.search(r'Block\s*(\d+)\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match:
-            block_id = int(match.group(1))
-            block_size = int(match.group(2))
-            blocks[block_id] = block_size
-            continue
-        
-        # Look for file sizes
-        match = re.search(r'File\s*(\d+)\s*:\s*(\d+)', message, re.IGNORECASE)
-        if match:
-            file_id = int(match.group(1))
-            file_size = int(match.group(2))
-            files[file_id] = file_size
-            continue
-    
-    # Add block sizes in order
-    if blocks:
-        html_output.append(f'<div class="plain-text">Enter the size of the blocks :</div>')
-        for i in sorted(blocks.keys()):
-            html_output.append(f'<div class="plain-text">Block {i} : {blocks[i]}</div>')
-    
-    # Add file sizes in order
-    if files:
-        html_output.append(f'<div class="plain-text">Enter the size of the files :-</div>')
-        for i in sorted(files.keys()):
-            html_output.append(f'<div class="plain-text">File {i}: {files[i]}</div>')
-    
-    # Look for allocation results
-    for entry in terminal_entries:
-        message = entry['message']
-        
-        # Look for "is put in" messages
-        match = re.search(r'File Size\s*(\d+)\s*is put in\s*(\d+)\s*partition', message, re.IGNORECASE)
-        if match:
-            file_size = match.group(1)
-            partition = match.group(2)
-            html_output.append(f'<div class="plain-text">File Size {file_size} is put in {partition} partition</div>')
-            continue
-        
-        # Look for "must wait" messages
-        match = re.search(r'File Size\s*(\d+)\s*must wait', message, re.IGNORECASE)
-        if match:
-            file_size = match.group(1)
-            html_output.append(f'<div class="plain-text">File Size {file_size} must wait</div>')
-            continue
-    
-    return "\n".join(html_output)
-
-def reconstruct_generic_terminal_view(terminal_entries, all_prompts):
-    """Reconstruct terminal view for generic programs with exact formatting."""
-    html_output = []
-    
-    # Process all entries in order
     for entry in terminal_entries:
         message = entry['message']
         
@@ -957,11 +664,16 @@ def reconstruct_generic_terminal_view(terminal_entries, all_prompts):
         if any(message in line for line in html_output):
             continue
         
-        # Add with plain text formatting
-        html_output.append(f'<div class="plain-text">{html.escape(message)}</div>')
+        # Format based on entry type
+        if entry['type'] == 'prompt':
+            html_output.append(f'<div style="color: #0066cc;">{html.escape(message)}</div>')
+        elif entry['type'] == 'input':
+            html_output.append(f'<div style="color: #009900; margin-left: 15px;">{html.escape(message)}</div>')
+        else:  # output
+            html_output.append(f'<div>{html.escape(message)}</div>')
     
     if not html_output:
-        return '<div class="plain-text">No terminal output available</div>'
+        return '<div>No terminal output available</div>'
     
     return "\n".join(html_output)
 
