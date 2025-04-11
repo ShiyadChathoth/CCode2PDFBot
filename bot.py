@@ -452,23 +452,28 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .terminal-table {{ 
                     font-family: 'Courier New', monospace;
                     border-collapse: collapse;
-                    width: auto;
+                    width: 100%;
                     margin: 15px 0;
                     table-layout: fixed;
                 }}
+                /* Fixed column widths for FCFS table */
+                .terminal-table col.col-pid {{ width: 50px; }}
+                .terminal-table col.col-burst {{ width: 100px; }}
+                .terminal-table col.col-turnaround {{ width: 150px; }}
+                .terminal-table col.col-waiting {{ width: 120px; }}
                 .terminal-table th, .terminal-table td {{ 
-                    text-align: center;
-                    padding: 8px 12px;
+                    text-align: left;
+                    padding: 8px;
                     font-size: 14px;
                     font-feature-settings: "tnum";
                     font-variant-numeric: tabular-nums;
                     white-space: nowrap;
+                    overflow: hidden;
                 }}
                 .terminal-table th {{ 
                     background-color: #f2f2f2;
                     font-weight: bold;
                     border-bottom: 2px solid #ddd;
-                    min-width: 80px;
                 }}
                 .terminal-table td {{ 
                     border-bottom: 1px solid #f0f0f0;
@@ -522,27 +527,25 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                         html_content += html.escape(processed_content)
                         processed_content = ""
                     
-                    # Start a new HTML table
+                    # Start a new HTML table with colgroup for fixed column widths
                     html_content += '</pre><table class="terminal-table">'
+                    html_content += '<colgroup>'
+                    html_content += '<col class="col-pid">'
+                    html_content += '<col class="col-burst">'
+                    html_content += '<col class="col-turnaround">'
+                    html_content += '<col class="col-waiting">'
+                    html_content += '</colgroup>'
                     
                     # If this is a header row, process it specially
                     if is_table_header:
                         # For FCFS tables, use fixed column headers to ensure alignment
-                        if 'PID' in line and 'Burst Time' in line and 'Turnaround Time' in line:
-                            html_content += '<thead><tr>'
-                            html_content += '<th>PID</th>'
-                            html_content += '<th>Burst Time</th>'
-                            html_content += '<th>Turnaround Time</th>'
-                            html_content += '<th>waiting Time</th>'
-                            html_content += '</tr></thead><tbody>'
-                            table_header = ['PID', 'Burst Time', 'Turnaround Time', 'waiting Time']
-                        else:
-                            # For other tables, split the header by multiple spaces or tabs
-                            table_header = re.split(r'\s{2,}|\t+', line.strip())
-                            html_content += '<thead><tr>'
-                            for header in table_header:
-                                html_content += f'<th>{html.escape(header.strip())}</th>'
-                            html_content += '</tr></thead><tbody>'
+                        html_content += '<thead><tr>'
+                        html_content += '<th>PID</th>'
+                        html_content += '<th>Burst Time</th>'
+                        html_content += '<th>Turnaround Time</th>'
+                        html_content += '<th>waiting Time</th>'
+                        html_content += '</tr></thead><tbody>'
+                        table_header = ['PID', 'Burst Time', 'Turnaround Time', 'waiting Time']
                         continue  # Skip adding this line to the table buffer
                 
                 # For data rows, add to table buffer
@@ -554,27 +557,22 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     # Process and add the table content as HTML table rows
                     if table_buffer:
                         for row in table_buffer:
-                            # For FCFS tables with known headers, ensure consistent column count
-                            if len(table_header) == 4 and table_header[0] == 'PID':
-                                # Split the row by multiple spaces or tabs
-                                cells = re.split(r'\s+', row.strip())
-                                # Ensure we have exactly 4 cells for FCFS tables
-                                if len(cells) <= 4:
-                                    html_content += '<tr>'
-                                    for i, cell in enumerate(cells):
-                                        if i < 4:  # Only use up to 4 cells
-                                            html_content += f'<td>{html.escape(cell.strip())}</td>'
-                                    # Add empty cells if needed
-                                    for i in range(len(cells), 4):
-                                        html_content += '<td></td>'
-                                    html_content += '</tr>'
-                            else:
-                                # For other tables, split by multiple spaces or tabs
-                                cells = re.split(r'\s{2,}|\t+', row)
-                                html_content += '<tr>'
-                                for cell in cells:
-                                    html_content += f'<td>{html.escape(cell.strip())}</td>'
-                                html_content += '</tr>'
+                            # For FCFS tables, ensure consistent column count
+                            # Split the row by any whitespace
+                            cells = re.split(r'\s+', row.strip())
+                            
+                            # Ensure we have exactly 4 cells
+                            while len(cells) < 4:
+                                cells.append("")
+                            
+                            # Only use the first 4 cells
+                            if len(cells) > 4:
+                                cells = cells[:4]
+                                
+                            html_content += '<tr>'
+                            for cell in cells:
+                                html_content += f'<td>{html.escape(cell.strip())}</td>'
+                            html_content += '</tr>'
                         table_buffer = []
                     
                     # Close table and start normal terminal section
@@ -587,27 +585,21 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         if in_table and table_buffer:
             # Process any remaining table rows
             for row in table_buffer:
-                # For FCFS tables with known headers, ensure consistent column count
-                if len(table_header) == 4 and table_header[0] == 'PID':
-                    # Split the row by multiple spaces or tabs
-                    cells = re.split(r'\s+', row.strip())
-                    # Ensure we have exactly 4 cells for FCFS tables
-                    if len(cells) <= 4:
-                        html_content += '<tr>'
-                        for i, cell in enumerate(cells):
-                            if i < 4:  # Only use up to 4 cells
-                                html_content += f'<td>{html.escape(cell.strip())}</td>'
-                        # Add empty cells if needed
-                        for i in range(len(cells), 4):
-                            html_content += '<td></td>'
-                        html_content += '</tr>'
-                else:
-                    # For other tables, split by multiple spaces or tabs
-                    cells = re.split(r'\s{2,}|\t+', row)
-                    html_content += '<tr>'
-                    for cell in cells:
-                        html_content += f'<td>{html.escape(cell.strip())}</td>'
-                    html_content += '</tr>'
+                # Split the row by any whitespace
+                cells = re.split(r'\s+', row.strip())
+                
+                # Ensure we have exactly 4 cells
+                while len(cells) < 4:
+                    cells.append("")
+                
+                # Only use the first 4 cells
+                if len(cells) > 4:
+                    cells = cells[:4]
+                    
+                html_content += '<tr>'
+                for cell in cells:
+                    html_content += f'<td>{html.escape(cell.strip())}</td>'
+                html_content += '</tr>'
             html_content += '</tbody></table>'
         elif processed_content:
             html_content += html.escape(processed_content)
