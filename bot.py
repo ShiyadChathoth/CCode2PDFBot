@@ -501,6 +501,31 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-family: monospace; 
                     border: 1px solid #ddd;
                     margin-bottom: 20px;
+                    white-space: pre-wrap;
+                }}
+                
+                /* Terminal sequence styling */
+                .terminal-sequence {{ 
+                    font-family: monospace;
+                    font-size: 16px;
+                    line-height: 1.5;
+                }}
+                
+                .program-output {{ 
+                    margin: 4px 0;
+                    color: #000;
+                }}
+                
+                .program-prompt {{ 
+                    margin: 4px 0;
+                    color: #0066cc;
+                    font-weight: bold;
+                }}
+                
+                .user-input {{ 
+                    margin: 4px 0;
+                    color: #009900;
+                    font-weight: bold;
                 }}
                 
                 .system-messages {{ 
@@ -622,11 +647,39 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 def reconstruct_terminal_view(context):
     """Reconstruct the terminal view from execution log."""
     execution_log = context.user_data['execution_log']
+    terminal_log = context.user_data.get('terminal_log', [])
     
-    # Extract process data from execution log if available
+    # PRIORITY 1: Use the raw terminal log if available
+    # This shows the exact output as it appeared in the terminal
+    if terminal_log:
+        # Join all terminal log entries and escape HTML
+        raw_output = ''.join(terminal_log)
+        # Convert newlines to <br> tags and preserve spaces
+        formatted_output = html.escape(raw_output).replace('\n', '<br>').replace(' ', '&nbsp;')
+        return f"<div style='white-space: pre-wrap;'>{formatted_output}</div>"
+    
+    # PRIORITY 2: Reconstruct from execution log in chronological order
+    # This preserves the exact sequence of inputs, outputs, and prompts
+    if execution_log:
+        # Sort by timestamp to ensure correct order
+        sorted_log = sorted(execution_log, key=lambda x: x['timestamp'])
+        
+        html_output = "<div class='terminal-sequence'>"
+        
+        for entry in sorted_log:
+            if entry['type'] == 'output':
+                html_output += f"<div class='program-output'>{html.escape(entry['message'])}</div>"
+            elif entry['type'] == 'prompt':
+                html_output += f"<div class='program-prompt'>{html.escape(entry['message'])}</div>"
+            elif entry['type'] == 'input':
+                html_output += f"<div class='user-input'>&gt; {html.escape(entry['message'])}</div>"
+        
+        html_output += "</div>"
+        return html_output
+    
+    # PRIORITY 3: Extract process data for scheduling programs
     process_data = extract_process_data_from_log(execution_log)
     
-    # If we have process data from the execution log, use it
     if process_data:
         # Generate the terminal view HTML
         html_output = ""
@@ -670,74 +723,9 @@ def reconstruct_terminal_view(context):
         html_output += "</table>"
         
         return html_output
-    else:
-        # If no process data was extracted, create a default terminal view based on the code
-        # This ensures we always show something in the terminal view section
-        
-        # Extract code structure to determine if it's a process scheduling program
-        code = context.user_data.get('code', '')
-        
-        # Check if this looks like a process scheduling program
-        if 'process' in code.lower() and ('burst' in code.lower() or 'wait' in code.lower() or 'turnaround' in code.lower()):
-            # Create sample process data based on code structure
-            sample_processes = create_sample_process_data(code)
-            
-            if sample_processes:
-                # Generate the terminal view HTML with sample data
-                html_output = ""
-                
-                # First, add the process input section
-                num_processes = len(sample_processes)
-                html_output += f"<p>Enter the no.of process: {num_processes}</p>"
-                
-                for i, proc in enumerate(sample_processes):
-                    html_output += f"<p>Enter the Burst time of process {i} : {proc['burst']}</p>"
-                
-                # Add order of execution
-                html_output += "<p>Order of execution:</p>"
-                execution_order = "P0"
-                for i in range(1, num_processes):
-                    execution_order += f"->P{i}"
-                html_output += f"<p>{execution_order}-></p>"
-                
-                # Add the process table header with clean styling (no borders)
-                html_output += """
-                <table>
-                    <tr>
-                        <th>PID</th>
-                        <th>Burst Time</th>
-                        <th>Turnaround Time</th>
-                        <th>Waiting Time</th>
-                    </tr>
-                """
-                
-                # Add each process row without any progress bars or borders
-                for proc in sample_processes:
-                    html_output += f"""
-                    <tr>
-                        <td>{proc['pid']}</td>
-                        <td>{proc['burst']}</td>
-                        <td>{proc['turnaround']}</td>
-                        <td>{proc['waiting']}</td>
-                    </tr>
-                    """
-                
-                html_output += "</table>"
-                
-                return html_output
-        
-        # If we couldn't create sample data or it's not a process scheduling program,
-        # extract all program output to show in terminal view
-        all_output = []
-        for entry in execution_log:
-            if entry['type'] in ['output', 'prompt']:
-                all_output.append(f"<p>{html.escape(entry['message'])}</p>")
-        
-        if all_output:
-            return "\n".join(all_output)
-        else:
-            # If there's no output at all, show a message
-            return "<p>No terminal output available</p>"
+    
+    # PRIORITY 4: If all else fails, show a message
+    return "<p>No terminal output available</p>"
 
 def create_sample_process_data(code):
     """Create sample process data based on code structure."""
