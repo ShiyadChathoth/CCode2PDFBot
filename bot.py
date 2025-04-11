@@ -397,7 +397,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-radius: 3px;
                 }}
                 .terminal-view {{
-                    margin: 5px 0;
+                    margin: 3px 0;
                 }}
             </style>
         </head>
