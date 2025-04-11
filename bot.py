@@ -713,8 +713,9 @@ def reconstruct_terminal_view(context):
             }
             .fixed-table th, .fixed-table td {
                 text-align: left;
-                padding: 8px;
+                padding: 15px 8px; /* Increased vertical padding from 8px to 15px */
                 border-bottom: 1px solid #ddd;
+                line-height: 1.8; /* Increased line height for more spacing */
             }
             .fixed-table th {
                 background-color: #f2f2f2;
@@ -722,6 +723,9 @@ def reconstruct_terminal_view(context):
             }
             .fixed-table tr:nth-child(even) {
                 background-color: #f9f9f9;
+            }
+            .fixed-table tr {
+                height: 40px; /* Set a minimum height for each row */
             }
             .col1 { width: 10%; }
             .col2 { width: 20%; }
