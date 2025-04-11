@@ -33,7 +33,7 @@ if not TOKEN:
     raise ValueError("No TOKEN provided in environment variables!")
 
 # States for ConversationHandler
-CODE, RUNNING = range(2)
+CODE, RUNNING, TITLE_INPUT = range(3)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
@@ -206,8 +206,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                     })
                     
                     await update.message.reply_text("Program execution completed.")
-                    await generate_and_send_pdf(update, context)
-                    break
+                    
+                    # Ask for program title before generating PDF
+                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                    return TITLE_INPUT
                 else:
                     # No output seen, just wait a bit more
                     await asyncio.sleep(0.1)
@@ -286,8 +288,10 @@ async def read_process_output(update: Update, context: CallbackContext):
             })
             
             await update.message.reply_text("Program execution completed.")
-            await generate_and_send_pdf(update, context)
-            break
+            
+            # Ask for program title before generating PDF
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            return TITLE_INPUT
 
 def process_output_chunk(context, buffer, update):
     """Process the output buffer, extracting complete lines and preserving partial lines."""
@@ -354,8 +358,10 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.stdin.drain()
         process.stdin.close()
         await process.wait()
-        await generate_and_send_pdf(update, context)
-        return ConversationHandler.END
+        
+        # Ask for program title before generating PDF
+        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+        return TITLE_INPUT
     
     # Add user input to execution log
     execution_log.append({
@@ -378,11 +384,26 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     
     return RUNNING
 
+async def handle_title_input(update: Update, context: CallbackContext) -> int:
+    title = update.message.text
+    
+    if title.lower() == 'skip':
+        # Use default title
+        context.user_data['program_title'] = "C Program Execution Report"
+    else:
+        # Use user-provided title
+        context.user_data['program_title'] = title
+    
+    await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
+    await generate_and_send_pdf(update, context)
+    return ConversationHandler.END
+
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
+        program_title = context.user_data.get('program_title', "C Program Execution Report")
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
@@ -412,6 +433,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 h1 {{ color: #333; }}
+                .program-title {{ 
+                    font-size: 24px; 
+                    color: #0066cc; 
+                    margin-bottom: 5px; 
+                    text-align: center;
+                    padding: 10px;
+                    background-color: #f5f5f5;
+                    border-radius: 5px;
+                }}
                 pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
                 .terminal {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; font-family: monospace; }}
                 .system-message {{ color: #0066cc; }}
@@ -478,10 +508,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             </style>
         </head>
         <body>
-            <h1><u><strong>SOURCE CODE</strong></u></h1>
+            <div class="program-title">{html.escape(program_title)}</div>
+            
+            <h1>Source Code</h1>
             <pre><code>{html.escape(code)}</code></pre>
             
-         <h1><u><strong>OUTPUT</strong></u></h1>
+            <h1><u><b>OUTPUT</b></u></h1>
             <div class="terminal-view">
                 {terminal_view}
             </div>
@@ -515,7 +547,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
                 filename="program_execution.pdf",
-                caption="Here's the execution report of your C code."
+                caption=f"Here's the execution report of your C code: {program_title}"
             )
         
         # Also send HTML file for better viewing
@@ -825,6 +857,7 @@ def main() -> None:
             states={
                 CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
                 RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
+                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
         )
