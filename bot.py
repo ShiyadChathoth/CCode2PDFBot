@@ -552,13 +552,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     display: none; 
                 }}
                 
-                /* Table styling */
+                /* Table styling for proper alignment */
                 table {{ 
                     border-collapse: collapse; 
                     width: 100%; 
                     margin: 15px 0; 
                     border: none; 
                     font-size: 15px;
+                    table-layout: fixed;
                 }}
                 
                 th {{ 
@@ -567,12 +568,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     text-align: left; 
                     border: none; 
                     font-weight: bold;
+                    width: 25%;
                 }}
                 
                 td {{ 
                     padding: 12px; 
                     text-align: left; 
                     border: none; 
+                    width: 25%;
                 }}
                 
                 tr:nth-child(even) {{ 
@@ -700,12 +703,12 @@ def reconstruct_terminal_view(context):
         
         # Add the process table header with clean styling (no borders)
         html_output += """
-        <table>
+        <table style="table-layout: fixed; width: 100%;">
             <tr>
-                <th>PID</th>
-                <th>Burst Time</th>
-                <th>Turnaround Time</th>
-                <th>Waiting Time</th>
+                <th style="width: 25%;">PID</th>
+                <th style="width: 25%;">Burst Time</th>
+                <th style="width: 25%;">Turnaround Time</th>
+                <th style="width: 25%;">Waiting Time</th>
             </tr>
         """
         
@@ -713,10 +716,10 @@ def reconstruct_terminal_view(context):
         for proc in process_data:
             html_output += f"""
             <tr>
-                <td>{proc['pid']}</td>
-                <td>{proc['burst']}</td>
-                <td>{proc['turnaround']}</td>
-                <td>{proc['waiting']}</td>
+                <td style="width: 25%;">{proc['pid']}</td>
+                <td style="width: 25%;">{proc['burst']}</td>
+                <td style="width: 25%;">{proc['turnaround']}</td>
+                <td style="width: 25%;">{proc['waiting']}</td>
             </tr>
             """
         
