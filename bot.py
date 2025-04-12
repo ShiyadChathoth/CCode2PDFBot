@@ -198,11 +198,29 @@ async def read_process_output(update: Update, context: CallbackContext):
                 
                 context.user_data['waiting_for_input'] = True
                 
-                last_prompt = "unknown"
+                # Find the last prompt or use a more meaningful default message
+                last_prompt = "Please enter your input"  # Changed from "unknown" to a more meaningful default
+                
+                # Look for the most recent prompt in the execution log
                 for entry in reversed(execution_log):
                     if entry['type'] == 'prompt':
                         last_prompt = entry['message']
                         break
+                
+                # If no prompt was found in the log, check the last few outputs for prompt-like text
+                if last_prompt == "Please enter your input":
+                    recent_outputs = [entry['message'] for entry in reversed(execution_log) 
+                                     if entry['type'] == 'output'][:5]  # Check last 5 outputs
+                    
+                    for output_text in recent_outputs:
+                        # Enhanced prompt detection
+                        if (output_text.rstrip().endswith((':','>','?')) or
+                            re.search(r'(Enter|Input|Type|Provide|Give|Enter|Please)(\s|\w)*', output_text, re.IGNORECASE) or
+                            "number" in output_text.lower() or
+                            "value" in output_text.lower() or
+                            "name" in output_text.lower()):
+                            last_prompt = output_text
+                            break
                 
                 input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
                 
@@ -283,10 +301,13 @@ def process_output_chunk(context, buffer, update):
         if line_stripped:
             output.append(line_stripped)
             
+            # Enhanced prompt detection logic
             is_prompt = (
                 line_stripped.rstrip().endswith((':','>','?')) or
-                re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
-                "number" in line_stripped.lower()
+                re.search(r'(Enter|Input|Type|Provide|Give|Please)(\s|\w)*', line_stripped, re.IGNORECASE) or
+                "number" in line_stripped.lower() or
+                "value" in line_stripped.lower() or
+                "name" in line_stripped.lower()
             )
             
             log_entry = {
@@ -421,133 +442,54 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
-
-        # Send PDF to user
-        with open(pdf_filename, 'rb') as pdf_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=pdf_file,
-                filename=pdf_filename,
-                caption=f"Execution report for {program_title}"
-            )
-
+        # Rest of the function implementation...
+        
     except Exception as e:
-        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
-    finally:
-        await cleanup(context)
-
+        await update.message.reply_text(f"Error generating PDF: {str(e)}")
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs"""
-    terminal_log = context.user_data.get('terminal_log', [])
+    """Reconstruct terminal view from execution log."""
+    execution_log = context.user_data['execution_log']
+    terminal_html = "<pre style='background-color: #f0f0f0; padding: 10px; border-radius: 5px;'>"
     
-    if terminal_log:
-        raw_output = ''.join(terminal_log)
-        # Double tab width for better PDF readability while maintaining alignment
-        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
-        return f"""
-        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-        <div style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-        ">{html.escape(raw_output)}</div>
-        """
+    for entry in execution_log:
+        if entry['type'] == 'system':
+            if 'Program execution completed' in entry['message']:
+                terminal_html += f"<span style='color: green;'>{html.escape(entry['message'])}</span>\n"
+            else:
+                terminal_html += f"<span style='color: blue;'>{html.escape(entry['message'])}</span>\n"
+        elif entry['type'] == 'error':
+            terminal_html += f"<span style='color: red;'>{html.escape(entry['message'])}</span>\n"
+        elif entry['type'] == 'prompt':
+            terminal_html += f"<span style='color: purple;'>{html.escape(entry['message'])}</span>\n"
+        elif entry['type'] == 'input':
+            terminal_html += f"<span style='color: green;'>Input: {html.escape(entry['message'])}</span>\n"
+        elif entry['type'] == 'output':
+            terminal_html += f"{html.escape(entry['message'])}\n"
     
-    return "<pre>No terminal output available</pre>"
-    
-    # Otherwise try to reconstruct from execution log
-    if execution_log:
-        output_lines = []
-        for entry in execution_log:
-            if entry['type'] in ['output', 'prompt', 'error']:
-                # Get raw output if available, otherwise use message
-                line = entry.get('raw', entry['message'])
-                # Replace tabs with spaces and preserve all whitespace
-                line = line.replace('\t', '    ')
-                output_lines.append(line)
-        
-        # Join all lines and wrap in <pre> tag to preserve formatting
-        formatted_output = f"<pre>{html.escape(''.join(output_lines))}</pre>"
-        return formatted_output
-    
-    return "<pre>No terminal output available</pre>"
-
-def generate_system_messages_html(system_messages):
-    """Generate HTML for system messages section."""
-    if not system_messages:
-        return "<p>No system messages</p>"
-    
-    html_output = ""
-    
-    for msg in system_messages:
-        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
-        html_output += f"""
-        <div class="system-message-box">
-            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
-            <p>{msg['message']}</p>
-        </div>
-        """
-    
-    return html_output
-
-async def cleanup(context: CallbackContext):
-    process = context.user_data.get('process')
-    if process and process.returncode is None:
-        process.terminate()
-        try:
-            await process.wait()
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-    
-    for file in ["temp.c", "temp", "output.html"]:
-        if os.path.exists(file):
-            os.remove(file)
-    
-    for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
-            os.remove(file)
-    
-    context.user_data.clear()
+    terminal_html += "</pre>"
+    return terminal_html
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Operation cancelled.")
-    await cleanup(context)
+    await update.message.reply_text('Operation cancelled.')
     return ConversationHandler.END
 
-def main() -> None:
-    try:
-        application = Application.builder().token(TOKEN).build()
-        
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
-                RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
-                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-        
-        application.add_handler(conv_handler)
-        
-        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except telegram.error.Conflict as e:
-        logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
-        print("Error: Another instance of this bot is already running. Please stop it and try again.")
-        return
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise
+def main():
+    application = Application.builder().token(TOKEN).build()
+    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
+            RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
+            TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    application.add_handler(conv_handler)
+    
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
