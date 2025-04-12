@@ -1,4 +1,5 @@
 
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -212,42 +213,31 @@ async def read_process_output(update: Update, context: CallbackContext):
             for task in pending:
                 task.cancel()
             
-            # In read_process_output function, modify the timeout detection logic:
-
-# Increase the max_timeout value to give more time for programs that might be waiting
-max_timeout = 15  # Increased from 10
-
-# Modify the timeout handling section to be more aggressive in detecting completion
-if timeout_counter > max_timeout and output_seen and not context.user_data.get('finishing_initiated', False):
-    logger.info("Forcing completion due to no activity")
-    context.user_data['finishing_initiated'] = True
-    
-    # Process any remaining output
-    if output_buffer:
-        process_output_chunk(context, output_buffer, update)
-        output_buffer = ""
-        context.user_data['output_buffer'] = ""
-    
-    # Force termination of the process if it's still running
-    if process.returncode is None:
-        try:
-            process.terminate()
-            # Give a short time for clean termination
-            await asyncio.sleep(0.5)
-        except:
-            pass
-    
-    # Mark program as complete
-    context.user_data['program_completed'] = True
-    
-    await update.message.reply_text("Program execution completed.")
-    
-    # Force the asking for title
-    await asyncio.sleep(0.8)
-    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-    
-    # Force state transition
-    return TITLE_INPUT
+            # Force completion after too many timeouts with no activity
+            if timeout_counter > max_timeout and output_seen and not context.user_data.get('finishing_initiated', False):
+                logger.info("Forcing completion due to no activity")
+                context.user_data['finishing_initiated'] = True
+                
+                # Process any remaining output
+                if output_buffer:
+                    process_output_chunk(context, output_buffer, update)
+                    output_buffer = ""
+                    context.user_data['output_buffer'] = ""
+                
+                # Wait to ensure all messages are sent
+                await asyncio.sleep(1.5)
+                
+                # Mark program as complete
+                context.user_data['program_completed'] = True
+                
+                await update.message.reply_text("Program appears to be idle. Execution completed.")
+                
+                # Force the asking for title
+                await asyncio.sleep(0.8)
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                
+                # Force state transition
+                return TITLE_INPUT
             
             # Check if process has completed
             if process.returncode is not None:
