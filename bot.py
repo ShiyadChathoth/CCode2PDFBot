@@ -69,6 +69,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
     context.user_data['last_prompt'] = ""
+    context.user_data['pending_messages'] = []  # Track messages that need to be sent
+    context.user_data['output_complete'] = False  # Flag to track when output is complete
     
     # Store the printf statements from the code for later analysis
     printf_patterns = extract_printf_statements(code)
@@ -214,7 +216,13 @@ async def read_process_output(update: Update, context: CallbackContext):
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
                 
-                if output_seen:
+                # If this is the first time we're detecting completion, set up finishing sequence
+                if not context.user_data.get('finishing_initiated', False):
+                    context.user_data['finishing_initiated'] = True
+                    
+                    # Wait a bit to ensure all output is processed
+                    await asyncio.sleep(1.5)
+                    
                     execution_log.append({
                         'type': 'system',
                         'message': 'Program execution completed.',
@@ -223,11 +231,16 @@ async def read_process_output(update: Update, context: CallbackContext):
                     
                     context.user_data['program_completed'] = True
                     
+                    # Send the completion message and wait for it to be sent
                     await update.message.reply_text("Program execution completed.")
+                    
+                    # Wait a bit more before asking for title
+                    await asyncio.sleep(0.8)
                     
                     await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                     return TITLE_INPUT
                 else:
+                    # We're already finishing, just wait
                     await asyncio.sleep(0.1)
                     continue
             
@@ -298,9 +311,18 @@ async def read_process_output(update: Update, context: CallbackContext):
         for task in pending:
             task.cancel()
 
-        if process.returncode is not None:
+        # Check if process has completed
+        if process.returncode is not None and not context.user_data.get('finishing_initiated', False):
             if output_buffer:
                 process_output_chunk(context, output_buffer, update)
+                output_buffer = ""
+                context.user_data['output_buffer'] = ""
+            
+            # Mark that we've started the finishing sequence
+            context.user_data['finishing_initiated'] = True
+            
+            # Add a significant delay to ensure all messages have been sent and processed
+            await asyncio.sleep(1.5)
             
             execution_log.append({
                 'type': 'system',
@@ -310,10 +332,21 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             context.user_data['program_completed'] = True
             
+            # Send completion message and wait for it to be sent
             await update.message.reply_text("Program execution completed.")
+            
+            # Wait a bit more before asking for title
+            await asyncio.sleep(0.8)
             
             await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
+
+async def process_output_message(update, message, prefix=""):
+    """Helper function to send output messages with better ordering control"""
+    try:
+        await update.message.reply_text(f"{prefix}{message}")
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
 
 def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace with improved printf prompt detection."""
@@ -335,7 +368,7 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
-            asyncio.create_task(update.message.reply_text(f"Program prompt: {buffer}"))
+            asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
             
             # We've processed the buffer as a prompt, so we can be waiting for input
             context.user_data['waiting_for_input'] = True
@@ -370,7 +403,7 @@ def process_output_chunk(context, buffer, update):
             execution_log.append(log_entry)
             
             prefix = "Program prompt:" if is_prompt else "Program output:"
-            asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
+            asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
     
     return new_buffer
 
@@ -428,6 +461,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     execution_log = context.user_data['execution_log']
     terminal_log = context.user_data['terminal_log']
 
+    # If program is already completed, treat this as title input
     if context.user_data.get('program_completed', False):
         return await handle_title_input(update, context)
 
@@ -447,6 +481,9 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.stdin.drain()
         process.stdin.close()
         await process.wait()
+        
+        # Add delay to ensure all output is processed
+        await asyncio.sleep(1)
         
         context.user_data['program_completed'] = True
         
