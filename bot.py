@@ -38,7 +38,9 @@ CODE, RUNNING, TITLE_INPUT = range(3)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
+        'Hi! Send me your C code, and I will compile and execute it step-by-step.\n\n'
+        'You can provide multiple inputs at once by separating them with spaces.\n'
+        'Example: "5 10 15" to send three separate inputs.'
     )
     return CODE
 
@@ -71,6 +73,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['last_prompt'] = ""
     context.user_data['pending_messages'] = []  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
+    context.user_data['message_queue'] = []  # Queue for ordered message processing
+    context.user_data['processing_message'] = False  # Flag to indicate we're processing messages
     
     # Store the printf statements from the code for later analysis
     printf_patterns = extract_printf_statements(code)
@@ -101,6 +105,10 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             context.user_data['process'] = process
             await update.message.reply_text("Code compiled successfully! Running now...")
             
+            # Start message processor
+            asyncio.create_task(process_message_queue(update, context))
+            
+            # Start output reader
             asyncio.create_task(read_process_output(update, context))
             return RUNNING
         else:
@@ -129,6 +137,10 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                     context.user_data['process'] = process
                     await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
                     
+                    # Start message processor
+                    asyncio.create_task(process_message_queue(update, context))
+                    
+                    # Start output reader
                     asyncio.create_task(read_process_output(update, context))
                     return RUNNING
             
@@ -175,6 +187,38 @@ def extract_printf_statements(code):
             printf_patterns.append(prompt_text)
     
     return printf_patterns
+
+async def process_message_queue(update, context):
+    """Process messages in the queue to ensure proper ordering."""
+    while True:
+        if context.user_data.get('program_completed', False) and not context.user_data['message_queue']:
+            # Program is done and queue is empty, we can exit
+            return
+            
+        if context.user_data['message_queue']:
+            # Process one message at a time
+            context.user_data['processing_message'] = True
+            message_data = context.user_data['message_queue'].pop(0)
+            
+            try:
+                await update.message.reply_text(message_data['text'])
+            except Exception as e:
+                logger.error(f"Failed to send message: {e}")
+                
+            context.user_data['processing_message'] = False
+            
+            # Short delay between messages for better readability
+            await asyncio.sleep(0.1)
+        else:
+            # No messages to process, sleep briefly
+            await asyncio.sleep(0.05)
+
+def add_to_message_queue(context, text):
+    """Add a message to the ordered processing queue."""
+    context.user_data['message_queue'].append({
+        'text': text,
+        'timestamp': datetime.datetime.now()
+    })
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -231,13 +275,13 @@ async def read_process_output(update: Update, context: CallbackContext):
                     
                     context.user_data['program_completed'] = True
                     
-                    # Send the completion message and wait for it to be sent
-                    await update.message.reply_text("Program execution completed.")
+                    # Send the completion message
+                    add_to_message_queue(context, "Program execution completed.")
                     
                     # Wait a bit more before asking for title
                     await asyncio.sleep(0.8)
                     
-                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                    add_to_message_queue(context, "Please provide a title for your program (or type 'skip' to use default):")
                     return TITLE_INPUT
                 else:
                     # We're already finishing, just wait
@@ -263,14 +307,14 @@ async def read_process_output(update: Update, context: CallbackContext):
                     # Get the last detected prompt
                     last_prompt = context.user_data.get('last_prompt', "unknown")
                     
-                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (multiple inputs can be separated by spaces, or type 'done' to finish):"
                     
                     execution_log.append({
                         'type': 'system',
                         'message': input_message,
                         'timestamp': datetime.datetime.now()
                     })
-                    await update.message.reply_text(input_message)
+                    add_to_message_queue(context, input_message)
             
             continue
 
@@ -306,7 +350,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'raw': line
                     })
                     
-                    await update.message.reply_text(f"Error: {line.strip()}")
+                    add_to_message_queue(context, f"Error: {line.strip()}")
 
         for task in pending:
             task.cancel()
@@ -332,21 +376,14 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             context.user_data['program_completed'] = True
             
-            # Send completion message and wait for it to be sent
-            await update.message.reply_text("Program execution completed.")
+            # Send completion message
+            add_to_message_queue(context, "Program execution completed.")
             
             # Wait a bit more before asking for title
             await asyncio.sleep(0.8)
             
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            add_to_message_queue(context, "Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
-
-async def process_output_message(update, message, prefix=""):
-    """Helper function to send output messages with better ordering control"""
-    try:
-        await update.message.reply_text(f"{prefix}{message}")
-    except Exception as e:
-        logger.error(f"Failed to send message: {e}")
 
 def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace with improved printf prompt detection."""
@@ -368,7 +405,7 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
-            asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
+            add_to_message_queue(context, f"Program prompt: {buffer}")
             
             # We've processed the buffer as a prompt, so we can be waiting for input
             context.user_data['waiting_for_input'] = True
@@ -403,7 +440,7 @@ def process_output_chunk(context, buffer, update):
             execution_log.append(log_entry)
             
             prefix = "Program prompt:" if is_prompt else "Program output:"
-            asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
+            add_to_message_queue(context, f"{prefix} {line_stripped}")
     
     return new_buffer
 
@@ -469,7 +506,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         if context.user_data.get('program_completed', False):
             return await handle_title_input(update, context)
         else:
-            await update.message.reply_text("Program is not running anymore.")
+            add_to_message_queue(context, "Program is not running anymore.")
             return ConversationHandler.END
 
     if user_input.lower() == 'done':
@@ -487,33 +524,49 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         
         context.user_data['program_completed'] = True
         
-        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+        add_to_message_queue(context, "Please provide a title for your program (or type 'skip' to use default):")
         return TITLE_INPUT
     
-    execution_log.append({
-        'type': 'input',
-        'message': user_input,
-        'timestamp': datetime.datetime.now()
-    })
-    
-    terminal_log.append(user_input + "\n")
+    # Handle multiple inputs (split by spaces)
+    inputs = user_input.split()
     
     # Set the flag that we're sending input to prevent output processing during this time
     context.user_data['is_sending_input'] = True
     
-    # Send the input confirmation message first and await it to ensure order
-    sent_message = await update.message.reply_text(f"Input sent: {user_input}")
+    if len(inputs) > 1:
+        add_to_message_queue(context, f"Processing multiple inputs: {', '.join(inputs)}")
     
-    # Only after confirmation is sent, send the input to the process
-    process.stdin.write((user_input + "\n").encode())
-    await process.stdin.drain()
-    context.user_data['inputs'].append(user_input)
+    for idx, single_input in enumerate(inputs):
+        execution_log.append({
+            'type': 'input',
+            'message': single_input,
+            'timestamp': datetime.datetime.now()
+        })
+        
+        terminal_log.append(single_input + "\n")
+        
+        # Add message about which input we're sending (only for multiple inputs)
+        if len(inputs) > 1:
+            add_to_message_queue(context, f"Input {idx+1}/{len(inputs)}: {single_input}")
+        else:
+            add_to_message_queue(context, f"Input sent: {single_input}")
+        
+        # Send the input to the process
+        process.stdin.write((single_input + "\n").encode())
+        await process.stdin.drain()
+        context.user_data['inputs'].append(single_input)
+        
+        # For multiple inputs, wait a bit between inputs
+        if idx < len(inputs) - 1:
+            await asyncio.sleep(0.3)
+    
+    # Reset flags
     context.user_data['waiting_for_input'] = False
     
     # Add a small delay to ensure message ordering
     await asyncio.sleep(0.2)
     
-    # Reset the flag
+    # Reset the input sending flag
     context.user_data['is_sending_input'] = False
     
     return RUNNING
@@ -526,7 +579,12 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     else:
         context.user_data['program_title'] = title
     
-    await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
+    add_to_message_queue(context, f"Using title: {context.user_data['program_title']}")
+    
+    # Wait for message queue to process this message
+    while context.user_data['message_queue']:
+        await asyncio.sleep(0.1)
+    
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
@@ -669,7 +727,7 @@ async def cleanup(context: CallbackContext):
     context.user_data.clear()
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Operation cancelled.")
+    add_to_message_queue(context, "Operation cancelled.")
     await cleanup(context)
     return ConversationHandler.END
 
