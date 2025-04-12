@@ -67,9 +67,13 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_buffer'] = ""
     context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
+    context.user_data['last_prompt'] = ""
     
     # Store the printf statements from the code for later analysis
-    context.user_data['printf_patterns'] = extract_printf_statements(code)
+    printf_patterns = extract_printf_statements(code)
+    context.user_data['printf_patterns'] = printf_patterns
+    
+    logger.info(f"Extracted printf patterns: {printf_patterns}")
     
     try:
         with open("temp.c", "w") as file:
@@ -150,13 +154,18 @@ def extract_printf_statements(code):
     # Look for printf statements that might be prompts
     printf_patterns = []
     
-    # Simple regex to find printf statements
-    printf_matches = re.finditer(r'printf\s*\(\s*[\"\'](.*?)[\"\']', code)
+    # More comprehensive regex to find printf statements with format specifiers
+    # This will match printf("Some text: ") as well as printf("Value %d: ", var)
+    pattern = r'printf\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
+    printf_matches = re.finditer(pattern, code)
     
     for match in printf_matches:
         prompt_text = match.group(1)
         # Clean escape sequences
         prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
+        
+        # Replace format specifiers with placeholder
+        prompt_text = re.sub(r'%[diouxXfFeEgGaAcspn]', '...', prompt_text)
         
         # Only add non-empty prompts
         if prompt_text.strip():
@@ -220,11 +229,8 @@ async def read_process_output(update: Update, context: CallbackContext):
                 
                 context.user_data['waiting_for_input'] = True
                 
-                last_prompt = "unknown"
-                for entry in reversed(execution_log):
-                    if entry['type'] == 'prompt':
-                        last_prompt = entry['message']
-                        break
+                # Get the last detected prompt
+                last_prompt = context.user_data.get('last_prompt', "unknown")
                 
                 input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
                 
@@ -302,13 +308,16 @@ def process_output_chunk(context, buffer, update):
         lines = lines[:-1]
     
     for line in lines:
-        line_stripped = line.strip()
+        line_stripped = line.rstrip()  # Use rstrip() to preserve leading whitespace but remove trailing newlines
         if line_stripped:
             output.append(line_stripped)
             
             # Enhanced prompt detection
-            is_prompt = detect_prompt(line_stripped, printf_patterns)
+            is_prompt, prompt_text = detect_prompt(line_stripped, printf_patterns)
             
+            if is_prompt:
+                context.user_data['last_prompt'] = prompt_text
+                
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
                 'message': line_stripped,
@@ -324,33 +333,48 @@ def process_output_chunk(context, buffer, update):
     return new_buffer
 
 def detect_prompt(line, printf_patterns):
-    """Enhanced detection for printf prompts."""
-    # Check if the line is a direct match or contains any of the printf patterns
+    """Enhanced detection for printf prompts. Returns (is_prompt, prompt_text)"""
+    line_text = line.strip()
+    
+    # First check if the line matches or closely matches any extracted printf patterns
     for pattern in printf_patterns:
-        if pattern in line:
-            return True
+        # Direct match
+        if pattern in line_text:
+            return True, line_text
+        
+        # Fuzzy match - check if most of the pattern appears in the line
+        # This helps with format specifiers that have been replaced with actual values
+        pattern_words = set(re.findall(r'\w+', pattern))
+        line_words = set(re.findall(r'\w+', line_text))
+        common_words = pattern_words.intersection(line_words)
+        
+        # If we have a significant match and the pattern ends with a prompt character
+        if (len(common_words) >= len(pattern_words) * 0.6 or 
+            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>')))) and len(pattern_words) > 0:
+            return True, line_text
     
-    # Traditional prompt detection as fallback
-    if (line.rstrip().endswith((':','>','?')) or
-        re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line, re.IGNORECASE) or
-        "number" in line.lower() or
-        re.search(r'(Please|Pls|Enter|Input|Value)[^.!]*', line, re.IGNORECASE)):
-        return True
+    # Input keywords check
+    input_keywords = ['enter', 'input', 'type', 'provide', 'give', 'value', 'values']
+    line_lower = line_text.lower()
     
-    # Check for common prompt formatting patterns
-    if re.search(r'[A-Za-z]\s*[:=]$', line):  # Ends with letter followed by : or =
-        return True
+    for keyword in input_keywords:
+        if keyword in line_lower:
+            return True, line_text
     
-    # Last-character based checks
-    last_char = line[-1] if line else ''
-    if last_char in '?:>':
-        return True
+    # Check for ending with prompt characters
+    if line_text.rstrip().endswith((':', '?', '>')):
+        return True, line_text
     
-    # Look for incomplete expressions that suggest waiting for input
-    if line.count('"') % 2 == 1:  # Odd number of quotes might indicate an incomplete printf
-        return True
+    # Check for common patterns where a variable name or description is followed by a colon
+    if re.search(r'[A-Za-z0-9_]+\s*:', line_text):
+        return True, line_text
     
-    return False
+    # Check for "Enter XXX: " patterns
+    if re.search(r'[Ee]nter\s+[^:]+:', line_text):
+        return True, line_text
+    
+    # If none of the above, this is probably not a prompt
+    return False, ""
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
@@ -509,23 +533,6 @@ def reconstruct_terminal_view(context):
             overflow-x: auto;
         ">{html.escape(raw_output)}</div>
         """
-    
-    return "<pre>No terminal output available</pre>"
-    
-    # Otherwise try to reconstruct from execution log
-    if execution_log:
-        output_lines = []
-        for entry in execution_log:
-            if entry['type'] in ['output', 'prompt', 'error']:
-                # Get raw output if available, otherwise use message
-                line = entry.get('raw', entry['message'])
-                # Replace tabs with spaces and preserve all whitespace
-                line = line.replace('\t', '    ')
-                output_lines.append(line)
-        
-        # Join all lines and wrap in <pre> tag to preserve formatting
-        formatted_output = f"<pre>{html.escape(''.join(output_lines))}</pre>"
-        return formatted_output
     
     return "<pre>No terminal output available</pre>"
 
