@@ -68,6 +68,9 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
     
+    # Store the printf statements from the code for later analysis
+    context.user_data['printf_patterns'] = extract_printf_statements(code)
+    
     try:
         with open("temp.c", "w") as file:
             file.write(code)
@@ -141,6 +144,25 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     except Exception as e:
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
+
+def extract_printf_statements(code):
+    """Extract potential printf prompt patterns from the code."""
+    # Look for printf statements that might be prompts
+    printf_patterns = []
+    
+    # Simple regex to find printf statements
+    printf_matches = re.finditer(r'printf\s*\(\s*[\"\'](.*?)[\"\']', code)
+    
+    for match in printf_matches:
+        prompt_text = match.group(1)
+        # Clean escape sequences
+        prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
+        
+        # Only add non-empty prompts
+        if prompt_text.strip():
+            printf_patterns.append(prompt_text)
+    
+    return printf_patterns
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -267,9 +289,10 @@ async def read_process_output(update: Update, context: CallbackContext):
             return TITLE_INPUT
 
 def process_output_chunk(context, buffer, update):
-    """Process the output buffer, preserving tabs and whitespace."""
+    """Process the output buffer, preserving tabs and whitespace with improved printf prompt detection."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
+    printf_patterns = context.user_data.get('printf_patterns', [])
     
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
     
@@ -283,11 +306,8 @@ def process_output_chunk(context, buffer, update):
         if line_stripped:
             output.append(line_stripped)
             
-            is_prompt = (
-                line_stripped.rstrip().endswith((':','>','?')) or
-                re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
-                "number" in line_stripped.lower()
-            )
+            # Enhanced prompt detection
+            is_prompt = detect_prompt(line_stripped, printf_patterns)
             
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
@@ -302,6 +322,35 @@ def process_output_chunk(context, buffer, update):
             asyncio.create_task(update.message.reply_text(f"{prefix} {line_stripped}"))
     
     return new_buffer
+
+def detect_prompt(line, printf_patterns):
+    """Enhanced detection for printf prompts."""
+    # Check if the line is a direct match or contains any of the printf patterns
+    for pattern in printf_patterns:
+        if pattern in line:
+            return True
+    
+    # Traditional prompt detection as fallback
+    if (line.rstrip().endswith((':','>','?')) or
+        re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line, re.IGNORECASE) or
+        "number" in line.lower() or
+        re.search(r'(Please|Pls|Enter|Input|Value)[^.!]*', line, re.IGNORECASE)):
+        return True
+    
+    # Check for common prompt formatting patterns
+    if re.search(r'[A-Za-z]\s*[:=]$', line):  # Ends with letter followed by : or =
+        return True
+    
+    # Last-character based checks
+    last_char = line[-1] if line else ''
+    if last_char in '?:>':
+        return True
+    
+    # Look for incomplete expressions that suggest waiting for input
+    if line.count('"') % 2 == 1:  # Odd number of quotes might indicate an incomplete printf
+        return True
+    
+    return False
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
