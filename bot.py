@@ -540,13 +540,17 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Use a simpler default title with no spaces to avoid path issues
         program_title = context.user_data.get('program_title', "C_Program_Report")
         
-        # Force a very simple filename for testing
-        pdf_filename = "program_output.pdf"
+        # Create a sanitized filename from the title
+        # Replace spaces and special characters with underscores
+        sanitized_title = re.sub(r'[^\w\s-]', '', program_title).strip().replace(' ', '_')
+        pdf_filename = f"{sanitized_title}.pdf"
         pdf_path = os.path.join(os.getcwd(), pdf_filename)
         
         # Log the current directory and file path for debugging
         logger.info(f"Current working directory: {os.getcwd()}")
         logger.info(f"Generating PDF to path: {pdf_path}")
+        
+        # Rest of the function remains the same...
         
         # Generate simplified HTML with minimal styling to reduce size
         html_content = f"""
