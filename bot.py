@@ -537,94 +537,43 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab alignment styling and 2 pages per sheet layout
+        # Generate HTML with proper tab alignment styling
         html_content = f"""
         <html>
         <head>
             <style>
-                @page {{
-                    size: A4;
-                    margin: 0;
-                }}
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 0;
-                }}
-                .page-container {{
-                    display: flex;
-                    flex-wrap: wrap;
-                }}
-                .sheet {{
-                    width: 50%;
-                    height: 100vh;
-                    box-sizing: border-box;
-                    padding: 15px;
-                    page-break-inside: avoid;
-                    border-right: 1px dashed #ccc;
-                }}
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 .program-title {{
-                    font-size: 20px;
+                    font-size: 30px;
                     font-weight: bold;
                     text-align: center;
-                    margin-bottom: 15px;
+                    margin-bottom: 20px;
                     text-decoration: underline;
-                    text-decoration-thickness: 3px;
+                    text-decoration-thickness: 5px;
+                    border-bottom: 3px
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
-                    font-size: 12px;
-                    line-height: 1.2;
-                    tab-size: 4;
-                    -moz-tab-size: 4;
-                    -o-tab-size: 4;
+                    font-size: 18px;
+                    line-height: 1.3;
+                    tab-size: 8;
+                    -moz-tab-size: 8;
+                    -o-tab-size: 8;
                     background: #FFFFFF;
                     padding: 5px;
                     border-radius: 3px;
-                    overflow: hidden;
-                }}
-                .code-section {{
-                    margin-bottom: 10px;
-                    max-height: 40vh;
-                    overflow: hidden;
                 }}
                 .terminal-view {{
                     margin: 10px 0;
-                    max-height: 50vh;
-                    overflow: hidden;
-                }}
-                .terminal-title {{
-                    font-size: 18px;
-                    font-weight: bold;
-                    margin-top: 10px;
-                    margin-bottom: 5px;
-                    text-decoration: underline;
-                }}
-                @media print {{
-                    .sheet {{
-                        page-break-inside: avoid;
-                    }}
                 }}
             </style>
         </head>
         <body>
-            <div class="page-container">
-                <!-- First sheet - Code -->
-                <div class="sheet">
-                    <div class="program-title">{html.escape(program_title)} - Code</div>
-                    <div class="code-section">
-                        <pre><code>{html.escape(code)}</code></pre>
-                    </div>
-                </div>
-                
-                <!-- Second sheet - Output -->
-                <div class="sheet">
-                    <div class="program-title">{html.escape(program_title)} - Output</div>
-                    <div class="terminal-view">
-                        {reconstruct_terminal_view(context, compact=True)}
-                    </div>
-                </div>
+            <div class="program-title">{html.escape(program_title)}</div>
+            <pre><code>{html.escape(code)}</code></pre>
+            <div class="terminal-view">
+                {reconstruct_terminal_view(context)}
             </div>
         </body>
         </html>
@@ -639,18 +588,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with wkhtmltopdf using options for page layout
-        subprocess.run([
-            "wkhtmltopdf",
-            "--page-size", "A4",
-            "--orientation", "Portrait",
-            "--margin-top", "5",
-            "--margin-bottom", "5",
-            "--margin-left", "5",
-            "--margin-right", "5",
-            "output.html", 
-            pdf_filename
-        ])
+        # Generate PDF
+        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
 
         # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
@@ -658,7 +597,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
                 filename=pdf_filename,
-                caption=f"Execution report for {program_title} (2 sheets per page)"
+                caption=f"Execution report for {program_title}"
             )
 
     except Exception as e:
@@ -667,28 +606,23 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await cleanup(context)
 
 
-def reconstruct_terminal_view(context, compact=False):
-    """Preserve exact terminal formatting with tabs, with optional compact mode"""
+def reconstruct_terminal_view(context):
+    """Preserve exact terminal formatting with tabs"""
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
         raw_output = ''.join(terminal_log)
-        # Adjust tab width based on compact mode
-        tab_width = 8 if not compact else 4
-        raw_output = raw_output.expandtabs(tab_width)
-        
-        title_style = "font-size: 18px;" if not compact else "font-size: 16px;"
-        font_size = "14px" if not compact else "12px"
-        
+        # Double tab width for better PDF readability while maintaining alignment
+        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
         return f"""
-        <h1 style="{title_style} text-decoration: underline;"><strong>OUTPUT</strong></h1>
+        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
         <div style="
             font-family: 'Courier New', monospace;
             white-space: pre;
-            font-size: {font_size};
+            font-size: 18px;
             line-height: 1.2;
             background: #FFFFFF;
-            padding: 5px;
+            padding: 10px;
             border-radius: 3px;
             overflow-x: auto;
         ">{html.escape(raw_output)}</div>
