@@ -1,12 +1,11 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     filters,
     CallbackContext,
-    ConversationHandler,
-    CallbackQueryHandler
+    ConversationHandler
 )
 import subprocess
 import os
@@ -19,7 +18,6 @@ import time
 import datetime
 import re
 import unicodedata
-import tempfile
 
 # Set up logging
 logging.basicConfig(
@@ -38,31 +36,10 @@ if not TOKEN:
 CODE, RUNNING, TITLE_INPUT = range(3)
 
 async def start(update: Update, context: CallbackContext) -> int:
-    """Start the conversation and ask user for C code."""
-    keyboard = [
-        [InlineKeyboardButton("Cancel", callback_data='cancel')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.',
-        reply_markup=reply_markup
+        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
     )
     return CODE
-
-async def help_command(update: Update, context: CallbackContext) -> None:
-    """Send a message when the command /help is issued."""
-    help_text = (
-        "I can compile and run your C programs. Here's how to use me:\n\n"
-        "1. Use /start to begin a new program session\n"
-        "2. Send your C code as a message\n"
-        "3. I'll compile and run it, showing you the output step by step\n"
-        "4. Provide input when prompted\n"
-        "5. Type 'done' to end program execution early\n"
-        "6. Use /cancel at any time to stop the current session\n\n"
-        "After your program finishes, I'll ask you for a title and generate a report."
-    )
-    await update.message.reply_text(help_text)
 
 def clean_whitespace(code):
     """Clean non-standard whitespace characters from code."""
@@ -90,8 +67,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_buffer'] = ""
     context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
-    context.user_data['last_output_lines'] = []  # Store recent output lines for better prompt detection
-    context.user_data['raw_output_lines'] = []   # Store raw output lines with all whitespace preserved
     
     try:
         with open("temp.c", "w") as file:
@@ -114,14 +89,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             )
             
             context.user_data['process'] = process
-            
-            # Add cancel button
-            keyboard = [
-                [InlineKeyboardButton("Cancel Execution", callback_data='cancel_execution')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text("Code compiled successfully! Running now...", reply_markup=reply_markup)
+            await update.message.reply_text("Code compiled successfully! Running now...")
             
             asyncio.create_task(read_process_output(update, context))
             return RUNNING
@@ -149,14 +117,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                     )
                     
                     context.user_data['process'] = process
-                    
-                    # Add cancel button
-                    keyboard = [
-                        [InlineKeyboardButton("Cancel Execution", callback_data='cancel_execution')]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...", reply_markup=reply_markup)
+                    await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
                     
                     asyncio.create_task(read_process_output(update, context))
                     return RUNNING
@@ -188,8 +149,6 @@ async def read_process_output(update: Update, context: CallbackContext):
     execution_log = context.user_data['execution_log']
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
-    last_output_lines = context.user_data.get('last_output_lines', [])
-    raw_output_lines = context.user_data.get('raw_output_lines', [])
     
     output_seen = False
     read_size = 1024
@@ -223,14 +182,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                     
                     context.user_data['program_completed'] = True
                     
-                    # Add skip button for title input
-                    keyboard = [
-                        [InlineKeyboardButton("Skip (Use Default Title)", callback_data='skip_title')]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
                     await update.message.reply_text("Program execution completed.")
-                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):", reply_markup=reply_markup)
+                    
+                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                     return TITLE_INPUT
                 else:
                     await asyncio.sleep(0.1)
@@ -244,23 +198,20 @@ async def read_process_output(update: Update, context: CallbackContext):
                 
                 context.user_data['waiting_for_input'] = True
                 
-                # Get the actual prompt from the most recent output
-                actual_prompt = get_actual_prompt(context)
+                last_prompt = "unknown"
+                for entry in reversed(execution_log):
+                    if entry['type'] == 'prompt':
+                        last_prompt = entry['message']
+                        break
                 
-                # Add done button for input
-                keyboard = [
-                    [InlineKeyboardButton("Done (End Program)", callback_data='done_input')]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                input_message = f"Program is waiting for input: \"{actual_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
                 
                 execution_log.append({
                     'type': 'system',
                     'message': input_message,
                     'timestamp': datetime.datetime.now()
                 })
-                await update.message.reply_text(input_message, reply_markup=reply_markup)
+                await update.message.reply_text(input_message)
             
             continue
 
@@ -310,74 +261,15 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             context.user_data['program_completed'] = True
             
-            # Add skip button for title input
-            keyboard = [
-                [InlineKeyboardButton("Skip (Use Default Title)", callback_data='skip_title')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
             await update.message.reply_text("Program execution completed.")
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):", reply_markup=reply_markup)
+            
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
-
-def get_actual_prompt(context):
-    """Get the actual prompt from the most recent output lines."""
-    raw_output_lines = context.user_data.get('raw_output_lines', [])
-    last_output_lines = context.user_data.get('last_output_lines', [])
-    
-    # Default prompt if nothing better is found
-    default_prompt = "Please enter your input"
-    
-    # First check if we have any raw output lines (these preserve all formatting)
-    if raw_output_lines:
-        # Look for printf patterns in the most recent raw output
-        for line in reversed(raw_output_lines[-5:]):  # Check last 5 lines
-            # Look for common printf prompt patterns
-            if "Enter" in line or "Input" in line or ":" in line or "?" in line:
-                return line.strip()
-    
-    # If no raw output lines match, check the processed output lines
-    if last_output_lines:
-        # First check the most recent line as it's most likely to be the prompt
-        last_line = last_output_lines[-1]
-        if is_prompt_line(last_line):
-            return last_line
-        
-        # If the last line doesn't look like a prompt, check the last few lines
-        for line in reversed(last_output_lines[-5:]):  # Check last 5 lines
-            if is_prompt_line(line):
-                return line
-    
-    # If we still don't have a prompt, check the execution log
-    execution_log = context.user_data['execution_log']
-    for entry in reversed(execution_log):
-        if entry['type'] == 'prompt':
-            return entry['message']
-    
-    # If all else fails, return the last output line anyway
-    # It's better than a generic default even if it's not a perfect prompt
-    return last_output_lines[-1] if last_output_lines else default_prompt
-
-def is_prompt_line(line):
-    """Check if a line looks like a prompt."""
-    # Common patterns for prompts
-    return (line.rstrip().endswith((':','>','?')) or
-            "Enter" in line or
-            "Input" in line or
-            "Type" in line or
-            "Provide" in line or
-            "Give" in line or
-            "Please" in line or
-            "number" in line.lower() or
-            "value" in line.lower() or
-            "name" in line.lower())
 
 def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    last_output_lines = context.user_data.get('last_output_lines', [])
-    raw_output_lines = context.user_data.get('raw_output_lines', [])
     
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
     
@@ -387,27 +279,15 @@ def process_output_chunk(context, buffer, update):
         lines = lines[:-1]
     
     for line in lines:
-        # Store the raw line with all whitespace preserved
-        if line.strip():
-            raw_output_lines.append(line)
-            # Keep only the last 20 raw lines
-            if len(raw_output_lines) > 20:
-                raw_output_lines = raw_output_lines[-20:]
-            context.user_data['raw_output_lines'] = raw_output_lines
-        
         line_stripped = line.strip()
         if line_stripped:
             output.append(line_stripped)
             
-            # Store recent output lines for better prompt detection
-            last_output_lines.append(line_stripped)
-            # Keep only the last 10 lines
-            if len(last_output_lines) > 10:
-                last_output_lines = last_output_lines[-10:]
-            context.user_data['last_output_lines'] = last_output_lines
-            
-            # Enhanced prompt detection logic
-            is_prompt = is_prompt_line(line_stripped)
+            is_prompt = (
+                line_stripped.rstrip().endswith((':','>','?')) or
+                re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
+                "number" in line_stripped.lower()
+            )
             
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
@@ -451,13 +331,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         
         context.user_data['program_completed'] = True
         
-        # Add skip button for title input
-        keyboard = [
-            [InlineKeyboardButton("Skip (Use Default Title)", callback_data='skip_title')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):", reply_markup=reply_markup)
+        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
         return TITLE_INPUT
     
     execution_log.append({
@@ -486,177 +360,194 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
         context.user_data['program_title'] = title
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
-    await generate_and_send_report(update, context)
+    await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
-async def button_callback(update: Update, context: CallbackContext) -> int:
-    """Handle button callbacks."""
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'cancel':
-        await query.edit_message_text(text="Operation cancelled.")
-        return ConversationHandler.END
-    
-    elif query.data == 'cancel_execution':
-        process = context.user_data.get('process')
-        if process:
-            try:
-                process.kill()
-                await query.edit_message_text(text="Program execution cancelled.")
-            except:
-                await query.edit_message_text(text="Failed to cancel program execution.")
-        else:
-            await query.edit_message_text(text="No program is currently running.")
-        return ConversationHandler.END
-    
-    elif query.data == 'done_input':
-        process = context.user_data.get('process')
-        execution_log = context.user_data['execution_log']
-        
-        if process:
-            execution_log.append({
-                'type': 'system',
-                'message': 'User terminated the program.',
-                'timestamp': datetime.datetime.now()
-            })
-            await process.stdin.drain()
-            process.stdin.close()
-            await process.wait()
-            
-            context.user_data['program_completed'] = True
-            
-            # Add skip button for title input
-            keyboard = [
-                [InlineKeyboardButton("Skip (Use Default Title)", callback_data='skip_title')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(text="Program terminated by user.")
-            await update.effective_chat.send_message("Please provide a title for your program (or type 'skip' to use default):", reply_markup=reply_markup)
-            return TITLE_INPUT
-    
-    elif query.data == 'skip_title':
-        context.user_data['program_title'] = "C Program Execution Report"
-        await query.edit_message_text(text=f"Using title: {context.user_data['program_title']}")
-        await generate_and_send_report(update, context)
-        return ConversationHandler.END
-    
-    return RUNNING
-
-async def generate_and_send_report(update: Update, context: CallbackContext):
+async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
+        terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
-        
-        # Create a text-based report instead of PDF
-        report = f"=== {program_title} ===\n\n"
-        
-        # Add source code section
-        report += "--- SOURCE CODE ---\n\n"
-        report += code + "\n\n"
-        
-        # Add execution log section
-        report += "--- EXECUTION LOG ---\n\n"
-        
-        for entry in execution_log:
-            timestamp = entry['timestamp'].strftime("%H:%M:%S")
-            
-            if entry['type'] == 'system':
-                if 'Program is waiting for input' not in entry['message']:
-                    report += f"[{timestamp}] SYSTEM: {entry['message']}\n"
-            elif entry['type'] == 'error':
-                report += f"[{timestamp}] ERROR: {entry['message']}\n"
-            elif entry['type'] == 'prompt':
-                report += f"[{timestamp}] PROMPT: {entry['message']}\n"
-            elif entry['type'] == 'input':
-                report += f"[{timestamp}] INPUT: {entry['message']}\n"
-            elif entry['type'] == 'output':
-                report += f"[{timestamp}] OUTPUT: {entry['message']}\n"
-        
-        # Add execution summary
-        report += "\n--- EXECUTION SUMMARY ---\n\n"
-        report += f"Inputs: {len(context.user_data.get('inputs', []))}\n"
-        report += f"Outputs: {len([e for e in execution_log if e['type'] == 'output'])}\n"
-        report += f"Prompts: {len([e for e in execution_log if e['type'] == 'prompt'])}\n"
-        report += f"Errors: {len(context.user_data.get('errors', []))}\n"
-        
-        # Save report to file
+
+        # Generate HTML with proper tab alignment styling
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .program-title {{
+                    font-size: 30px;
+                    font-weight: bold;
+                    text-align: center;
+                    margin-bottom: 20px;
+                    text-decoration: underline;
+                    text-decoration-thickness: 5px;
+                    border-bottom: 3px
+                }}
+                pre {{
+                    font-family: 'Courier New', monospace;
+                    white-space: pre;
+                    font-size: 18px;
+                    line-height: 1.3;
+                    tab-size: 8;
+                    -moz-tab-size: 8;
+                    -o-tab-size: 8;
+                    background: #FFFFFF;
+                    padding: 5px;
+                    border-radius: 3px;
+                }}
+                .terminal-view {{
+                    margin: 10px 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="program-title">{html.escape(program_title)}</div>
+            <pre><code>{html.escape(code)}</code></pre>
+            <div class="terminal-view">
+                {reconstruct_terminal_view(context)}
+            </div>
+        </body>
+        </html>
+        """
+
+        with open("output.html", "w") as file:
+            file.write(html_content)
+
+        # Generate sanitized filename from title
+        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
-        report_filename = f"{sanitized_title}.txt"
-        report_path = os.path.join(os.getcwd(), report_filename)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        pdf_filename = f"{sanitized_title}.pdf"
         
-        with open(report_path, 'w') as report_file:
-            report_file.write(report)
-        
-        # Send the report file
-        with open(report_path, 'rb') as report_file:
-            await update.effective_chat.send_document(
-                document=report_file,
-                filename=report_filename,
-                caption=f"Here's your {program_title} report."
+        # Generate PDF
+        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+
+        # Send PDF to user
+        with open(pdf_filename, 'rb') as pdf_file:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=pdf_file,
+                filename=pdf_filename,
+                caption=f"Execution report for {program_title}"
             )
-        
-        # Clean up temporary files
-        os.unlink(report_path)
-        
-        # Send a completion message
-        await update.effective_chat.send_message(
-            "Report generated and sent successfully! Use /start to compile another program."
-        )
-        
+
     except Exception as e:
-        logger.error(f"Error generating report: {str(e)}")
-        await update.effective_chat.send_message(
-            f"Error generating report: {str(e)}\n\nPlease try again or contact the administrator."
-        )
+        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
+    finally:
+        await cleanup(context)
+
+
+def reconstruct_terminal_view(context):
+    """Preserve exact terminal formatting with tabs"""
+    terminal_log = context.user_data.get('terminal_log', [])
+    
+    if terminal_log:
+        raw_output = ''.join(terminal_log)
+        # Double tab width for better PDF readability while maintaining alignment
+        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+        return f"""
+        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
+        <div style="
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: 18px;
+            line-height: 1.2;
+            background: #FFFFFF;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        ">{html.escape(raw_output)}</div>
+        """
+    
+    return "<pre>No terminal output available</pre>"
+    
+    # Otherwise try to reconstruct from execution log
+    if execution_log:
+        output_lines = []
+        for entry in execution_log:
+            if entry['type'] in ['output', 'prompt', 'error']:
+                # Get raw output if available, otherwise use message
+                line = entry.get('raw', entry['message'])
+                # Replace tabs with spaces and preserve all whitespace
+                line = line.replace('\t', '    ')
+                output_lines.append(line)
+        
+        # Join all lines and wrap in <pre> tag to preserve formatting
+        formatted_output = f"<pre>{html.escape(''.join(output_lines))}</pre>"
+        return formatted_output
+    
+    return "<pre>No terminal output available</pre>"
+
+def generate_system_messages_html(system_messages):
+    """Generate HTML for system messages section."""
+    if not system_messages:
+        return "<p>No system messages</p>"
+    
+    html_output = ""
+    
+    for msg in system_messages:
+        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
+        html_output += f"""
+        <div class="system-message-box">
+            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
+            <p>{msg['message']}</p>
+        </div>
+        """
+    
+    return html_output
+
+async def cleanup(context: CallbackContext):
+    process = context.user_data.get('process')
+    if process and process.returncode is None:
+        process.terminate()
+        try:
+            await process.wait()
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+    
+    for file in ["temp.c", "temp", "output.html"]:
+        if os.path.exists(file):
+            os.remove(file)
+    
+    for file in os.listdir():
+        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
+            os.remove(file)
+    
+    context.user_data.clear()
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    """Cancel and end the conversation."""
-    process = context.user_data.get('process')
-    if process:
-        try:
-            process.kill()
-        except:
-            pass
-    
-    await update.message.reply_text('Operation cancelled.')
+    await update.message.reply_text("Operation cancelled.")
+    await cleanup(context)
     return ConversationHandler.END
 
-def main():
-    application = Application.builder().token(TOKEN).build()
-    
-    # Create a start command handler that works outside the conversation
-    start_handler = CommandHandler('start', start)
-    
-    conv_handler = ConversationHandler(
-        entry_points=[start_handler],
-        states={
-            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
-            RUNNING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running),
-                CallbackQueryHandler(button_callback)
-            ],
-            TITLE_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input),
-                CallbackQueryHandler(button_callback)
-            ]
-        },
-        fallbacks=[
-            CommandHandler('cancel', cancel),
-            start_handler  # Allow /start to restart the conversation
-        ]
-    )
-    
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('help', help_command))
-    
-    # Add a global handler for /start outside of conversations
-    application.add_handler(start_handler)
-    
-    application.run_polling()
+def main() -> None:
+    try:
+        application = Application.builder().token(TOKEN).build()
+        
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
+                RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
+                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+        )
+        
+        application.add_handler(conv_handler)
+        
+        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except telegram.error.Conflict as e:
+        logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
+        print("Error: Another instance of this bot is already running. Please stop it and try again.")
+        return
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise
 
 if __name__ == '__main__':
     main()
