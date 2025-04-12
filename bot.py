@@ -536,110 +536,63 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
-        program_title = context.user_data.get('program_title', "C Program Execution Report")
-
-        # Generate HTML with proper tab alignment styling and page break control
+        
+        # Use a simpler default title with no spaces to avoid path issues
+        program_title = context.user_data.get('program_title', "C_Program_Report")
+        
+        # Force a very simple filename for testing
+        pdf_filename = "program_output.pdf"
+        pdf_path = os.path.join(os.getcwd(), pdf_filename)
+        
+        # Log the current directory and file path for debugging
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Generating PDF to path: {pdf_path}")
+        
+        # Generate simplified HTML with minimal styling to reduce size
         html_content = f"""
         <html>
         <head>
             <style>
-                @page {{
-                    size: A4;
-                    margin: 20mm;
+                @page {{ size: A4; margin: 20mm; }}
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 0; }}
+                .program-title {{ 
+                    font-size: 24px; 
+                    font-weight: bold; 
+                    text-align: center; 
+                    margin-bottom: 15px; 
                 }}
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 0;
-                    padding: 0;
+                pre {{ 
+                    font-family: monospace; 
+                    font-size: 14px; 
+                    line-height: 1.3; 
+                    white-space: pre-wrap; /* Allow wrapping for long lines */
+                    overflow-x: visible; 
                 }}
-                .content-container {{
-                    display: flex;
-                    flex-direction: column;
-                }}
-                .program-title {{
-                    font-size: 30px;
-                    font-weight: bold;
-                    text-align: center;
-                    margin-bottom: 20px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    border-bottom: 3px;
-                }}
-                pre {{
-                    font-family: 'Courier New', monospace;
-                    white-space: pre;
-                    font-size: 18px;
-                    line-height: 1.3;
-                    tab-size: 8;
-                    -moz-tab-size: 8;
-                    -o-tab-size: 8;
-                    background: #FFFFFF;
-                    padding: 5px;
-                    border-radius: 3px;
-                    overflow-x: auto;
-                }}
-                .code-section {{
-                    margin-bottom: 20px;
-                }}
-                .terminal-view {{
-                    margin: 10px 0;
-                }}
-                .output-title {{
-                    font-size: 25px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    font-weight: bold;
-                    margin-top: 20px;
-                    page-break-before: auto;
-                    page-break-after: avoid;
-                }}
-                .output-content {{
-                    page-break-before: avoid;
+                .output-title {{ 
+                    font-size: 20px; 
+                    font-weight: bold; 
+                    margin-top: 15px; 
                 }}
             </style>
         </head>
         <body>
-            <div class="content-container">
-                <div class="program-title">{html.escape(program_title)}</div>
-                <div class="code-section">
-                    <pre><code>{html.escape(code)}</code></pre>
-                </div>
-                <div class="terminal-view">
-                    {reconstruct_terminal_view(context)}
-                </div>
-            </div>
+            <div class="program-title">{html.escape(program_title)}</div>
+            <pre><code>{html.escape(code)}</code></pre>
+            <div class="output-title">OUTPUT</div>
+            <pre>{''.join(terminal_log).expandtabs(8)}</pre>
         </body>
         </html>
         """
 
-        # Write HTML to a file with a fixed name
+        # Write HTML to a file
         html_filename = "output.html"
         with open(html_filename, "w") as file:
             file.write(html_content)
-
-        # Generate sanitized filename from title
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
-        pdf_filename = f"{sanitized_title}.pdf"
         
-        # Use a fixed path for the PDF file to avoid issues
-        pdf_path = os.path.join(os.getcwd(), pdf_filename)
-        
-        # Log the output path for debugging
-        logger.info(f"Generating PDF to path: {pdf_path}")
-        
-        # Use specific wkhtmltopdf options to control page fill
+        # Use simplified wkhtmltopdf command with fewer options
         result = subprocess.run([
             "wkhtmltopdf",
-            "--enable-smart-shrinking",
-            "--disable-smart-page-breaks",
-            "--print-media-type",
             "--page-size", "A4",
-            "--margin-top", "20mm",
-            "--margin-bottom", "20mm",
-            "--margin-left", "20mm",
-            "--margin-right", "20mm",
-            "--minimum-font-size", "12",
             html_filename, 
             pdf_path
         ], capture_output=True, text=True)
@@ -647,7 +600,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         # Check if PDF generation was successful
         if result.returncode != 0:
             logger.error(f"wkhtmltopdf error: {result.stderr}")
-            await update.message.reply_text(f"Error generating PDF: {result.stderr}")
+            # Send a shorter error message to avoid the "Message is too long" error
+            await update.message.reply_text(f"Error generating PDF. Check logs for details.")
             return ConversationHandler.END
             
         # Verify the file exists before sending
@@ -656,25 +610,42 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             await update.message.reply_text("Error: PDF file was not created.")
             return ConversationHandler.END
         
-        # Send PDF to user
+        # Send PDF to user with minimal caption to avoid message length issues
         try:
             with open(pdf_path, 'rb') as pdf_file:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=pdf_file,
                     filename=pdf_filename,
-                    caption=f"Execution report for {program_title}"
+                    caption="Program execution report"  # Shorter caption
                 )
             logger.info(f"Successfully sent PDF: {pdf_path}")
-        except Exception as e:
-            logger.error(f"Error sending PDF: {str(e)}")
-            await update.message.reply_text(f"Error sending PDF: {str(e)}")
+        except telegram.error.BadRequest as e:
+            if "Message is too long" in str(e):
+                # Try again with no caption
+                with open(pdf_path, 'rb') as pdf_file:
+                    await context.bot.send_document(
+                        chat_id=update.effective_chat.id,
+                        document=pdf_file,
+                        filename=pdf_filename
+                    )
+                logger.info(f"Successfully sent PDF without caption")
+            else:
+                raise
 
     except Exception as e:
         logger.error(f"Error generating PDF: {str(e)}")
-        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
+        # Send a short error message
+        await update.message.reply_text(f"PDF generation failed: {str(e)[:50]}...")
     finally:
-        await cleanup(context)
+        # Don't clean up the PDF file immediately
+        files_to_clean = ["temp.c", "temp", "output.html"]
+        for file in files_to_clean:
+            if os.path.exists(file):
+                try:
+                    os.remove(file)
+                except Exception as e:
+                    logger.error(f"Error removing file {file}: {str(e)}")
 
 
 def reconstruct_terminal_view(context):
