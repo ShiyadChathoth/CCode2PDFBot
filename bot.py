@@ -186,7 +186,15 @@ async def read_process_output(update: Update, context: CallbackContext):
     read_size = 1024
     timeout_counter = 0
     
+    # Add a flag to track if we're currently sending input
+    context.user_data['is_sending_input'] = False
+    
     while True:
+        # If we're currently sending input, wait a bit to ensure proper message order
+        if context.user_data.get('is_sending_input', False):
+            await asyncio.sleep(0.2)
+            continue
+            
         stdout_task = asyncio.create_task(process.stdout.read(read_size))
         stderr_task = asyncio.create_task(process.stderr.read(read_size))
         
@@ -453,12 +461,23 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     
     terminal_log.append(user_input + "\n")
     
+    # Set the flag that we're sending input to prevent output processing during this time
+    context.user_data['is_sending_input'] = True
+    
+    # Send the input confirmation message first and await it to ensure order
+    sent_message = await update.message.reply_text(f"Input sent: {user_input}")
+    
+    # Only after confirmation is sent, send the input to the process
     process.stdin.write((user_input + "\n").encode())
     await process.stdin.drain()
     context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
     
-    await update.message.reply_text(f"Input sent: {user_input}")
+    # Add a small delay to ensure message ordering
+    await asyncio.sleep(0.2)
+    
+    # Reset the flag
+    context.user_data['is_sending_input'] = False
     
     return RUNNING
 
