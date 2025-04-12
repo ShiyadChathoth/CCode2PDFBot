@@ -19,6 +19,8 @@ import time
 import datetime
 import re
 import unicodedata
+import tempfile
+from weasyprint import HTML
 
 # Set up logging
 logging.basicConfig(
@@ -90,6 +92,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
     context.user_data['last_output_lines'] = []  # Store recent output lines for better prompt detection
+    context.user_data['raw_output_lines'] = []   # Store raw output lines with all whitespace preserved
     
     try:
         with open("temp.c", "w") as file:
@@ -187,6 +190,7 @@ async def read_process_output(update: Update, context: CallbackContext):
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
     last_output_lines = context.user_data.get('last_output_lines', [])
+    raw_output_lines = context.user_data.get('raw_output_lines', [])
     
     output_seen = False
     read_size = 1024
@@ -319,23 +323,31 @@ async def read_process_output(update: Update, context: CallbackContext):
 
 def get_actual_prompt(context):
     """Get the actual prompt from the most recent output lines."""
+    raw_output_lines = context.user_data.get('raw_output_lines', [])
     last_output_lines = context.user_data.get('last_output_lines', [])
     
     # Default prompt if nothing better is found
     default_prompt = "Please enter your input"
     
-    if not last_output_lines:
-        return default_prompt
+    # First check if we have any raw output lines (these preserve all formatting)
+    if raw_output_lines:
+        # Look for printf patterns in the most recent raw output
+        for line in reversed(raw_output_lines[-5:]):  # Check last 5 lines
+            # Look for common printf prompt patterns
+            if "Enter" in line or "Input" in line or ":" in line or "?" in line:
+                return line.strip()
     
-    # First check the most recent line as it's most likely to be the prompt
-    last_line = last_output_lines[-1]
-    if is_prompt_line(last_line):
-        return last_line
-    
-    # If the last line doesn't look like a prompt, check the last few lines
-    for line in reversed(last_output_lines):
-        if is_prompt_line(line):
-            return line
+    # If no raw output lines match, check the processed output lines
+    if last_output_lines:
+        # First check the most recent line as it's most likely to be the prompt
+        last_line = last_output_lines[-1]
+        if is_prompt_line(last_line):
+            return last_line
+        
+        # If the last line doesn't look like a prompt, check the last few lines
+        for line in reversed(last_output_lines[-5:]):  # Check last 5 lines
+            if is_prompt_line(line):
+                return line
     
     # If we still don't have a prompt, check the execution log
     execution_log = context.user_data['execution_log']
@@ -344,14 +356,19 @@ def get_actual_prompt(context):
             return entry['message']
     
     # If all else fails, return the last output line anyway
-    # It's better than "unknown" even if it's not a perfect prompt
+    # It's better than a generic default even if it's not a perfect prompt
     return last_output_lines[-1] if last_output_lines else default_prompt
 
 def is_prompt_line(line):
     """Check if a line looks like a prompt."""
     # Common patterns for prompts
     return (line.rstrip().endswith((':','>','?')) or
-            re.search(r'(Enter|Input|Type|Provide|Give|Please)(\s|\w)*', line, re.IGNORECASE) or
+            "Enter" in line or
+            "Input" in line or
+            "Type" in line or
+            "Provide" in line or
+            "Give" in line or
+            "Please" in line or
             "number" in line.lower() or
             "value" in line.lower() or
             "name" in line.lower())
@@ -361,6 +378,7 @@ def process_output_chunk(context, buffer, update):
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
     last_output_lines = context.user_data.get('last_output_lines', [])
+    raw_output_lines = context.user_data.get('raw_output_lines', [])
     
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
     
@@ -370,6 +388,14 @@ def process_output_chunk(context, buffer, update):
         lines = lines[:-1]
     
     for line in lines:
+        # Store the raw line with all whitespace preserved
+        if line.strip():
+            raw_output_lines.append(line)
+            # Keep only the last 20 raw lines
+            if len(raw_output_lines) > 20:
+                raw_output_lines = raw_output_lines[-20:]
+            context.user_data['raw_output_lines'] = raw_output_lines
+        
         line_stripped = line.strip()
         if line_stripped:
             output.append(line_stripped)
@@ -549,58 +575,162 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     tab-size: 8;
                     -moz-tab-size: 8;
                     -o-tab-size: 8;
-                    background: #FFFFFF;
-                    padding: 5px;
-                    border-radius: 3px;
+                    background: #f5f5f5;
+                    padding: 15px;
+                    border-radius: 5px;
+                    border: 1px solid #ddd;
+                    overflow-x: auto;
                 }}
                 .terminal-view {{
-                    margin: 10px 0;
+                    margin: 20px 0;
+                    background-color: #f0f0f0;
+                    padding: 15px;
+                    border-radius: 5px;
+                    border: 1px solid #ccc;
+                }}
+                .section-title {{
+                    font-size: 24px;
+                    font-weight: bold;
+                    margin: 30px 0 15px 0;
+                    color: #333;
+                    border-bottom: 2px solid #999;
+                    padding-bottom: 5px;
+                }}
+                .prompt {{
+                    color: purple;
+                    font-weight: bold;
+                }}
+                .input {{
+                    color: green;
+                    font-weight: bold;
+                }}
+                .output {{
+                    color: black;
+                }}
+                .error {{
+                    color: red;
+                    font-weight: bold;
+                }}
+                .system {{
+                    color: blue;
+                    font-style: italic;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                }}
+                th, td {{
+                    border: 1px solid #ddd;
+                    padding: 8px;
+                    text-align: left;
+                }}
+                th {{
+                    background-color: #f2f2f2;
+                    font-weight: bold;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f9f9f9;
                 }}
             </style>
         </head>
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
+            
+            <div class="section-title">Source Code</div>
             <pre><code>{html.escape(code)}</code></pre>
+            
+            <div class="section-title">Program Execution</div>
             <div class="terminal-view">
                 {reconstruct_terminal_view(context)}
             </div>
+            
+            <div class="section-title">Execution Summary</div>
+            <table>
+                <tr>
+                    <th>Type</th>
+                    <th>Count</th>
+                </tr>
+                <tr>
+                    <td>Inputs</td>
+                    <td>{len(context.user_data.get('inputs', []))}</td>
+                </tr>
+                <tr>
+                    <td>Outputs</td>
+                    <td>{len([e for e in execution_log if e['type'] == 'output'])}</td>
+                </tr>
+                <tr>
+                    <td>Prompts</td>
+                    <td>{len([e for e in execution_log if e['type'] == 'prompt'])}</td>
+                </tr>
+                <tr>
+                    <td>Errors</td>
+                    <td>{len(context.user_data.get('errors', []))}</td>
+                </tr>
+            </table>
         </body>
         </html>
         """
 
-        with open("output.html", "w") as file:
-            file.write(html_content)
-
+        # Create a temporary HTML file
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as html_file:
+            html_file_path = html_file.name
+            html_file.write(html_content.encode('utf-8'))
+        
         # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
+        pdf_path = os.path.join(os.getcwd(), pdf_filename)
         
-        # Rest of the function implementation...
+        # Generate PDF using WeasyPrint
+        HTML(html_file_path).write_pdf(pdf_path)
+        
+        # Send the PDF file
+        with open(pdf_path, 'rb') as pdf_file:
+            await update.effective_chat.send_document(
+                document=pdf_file,
+                filename=pdf_filename,
+                caption=f"Here's your {program_title} PDF report."
+            )
+        
+        # Clean up temporary files
+        os.unlink(html_file_path)
+        os.unlink(pdf_path)
+        
+        # Send a completion message
+        await update.effective_chat.send_message(
+            "PDF report generated and sent successfully! Use /start to compile another program."
+        )
         
     except Exception as e:
-        await update.effective_chat.send_message(f"Error generating PDF: {str(e)}")
+        logger.error(f"Error generating PDF: {str(e)}")
+        await update.effective_chat.send_message(
+            f"Error generating PDF: {str(e)}\n\nPlease try again or contact the administrator."
+        )
 
 def reconstruct_terminal_view(context):
     """Reconstruct terminal view from execution log."""
     execution_log = context.user_data['execution_log']
-    terminal_html = "<pre style='background-color: #f0f0f0; padding: 10px; border-radius: 5px;'>"
+    terminal_html = "<pre>"
     
     for entry in execution_log:
         if entry['type'] == 'system':
             if 'Program execution completed' in entry['message']:
-                terminal_html += f"<span style='color: green;'>{html.escape(entry['message'])}</span>\n"
+                terminal_html += f"<span class='system'>{html.escape(entry['message'])}</span>\n"
+            elif 'Program is waiting for input' in entry['message']:
+                # Skip the internal waiting messages
+                continue
             else:
-                terminal_html += f"<span style='color: blue;'>{html.escape(entry['message'])}</span>\n"
+                terminal_html += f"<span class='system'>{html.escape(entry['message'])}</span>\n"
         elif entry['type'] == 'error':
-            terminal_html += f"<span style='color: red;'>{html.escape(entry['message'])}</span>\n"
+            terminal_html += f"<span class='error'>{html.escape(entry['message'])}</span>\n"
         elif entry['type'] == 'prompt':
-            terminal_html += f"<span style='color: purple;'>{html.escape(entry['message'])}</span>\n"
+            terminal_html += f"<span class='prompt'>{html.escape(entry['message'])}</span>\n"
         elif entry['type'] == 'input':
-            terminal_html += f"<span style='color: green;'>Input: {html.escape(entry['message'])}</span>\n"
+            terminal_html += f"<span class='input'>Input: {html.escape(entry['message'])}</span>\n"
         elif entry['type'] == 'output':
-            terminal_html += f"{html.escape(entry['message'])}\n"
+            terminal_html += f"<span class='output'>{html.escape(entry['message'])}</span>\n"
     
     terminal_html += "</pre>"
     return terminal_html
@@ -620,8 +750,11 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 def main():
     application = Application.builder().token(TOKEN).build()
     
+    # Create a start command handler that works outside the conversation
+    start_handler = CommandHandler('start', start)
+    
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[start_handler],
         states={
             CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
             RUNNING: [
@@ -635,12 +768,15 @@ def main():
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            CommandHandler('start', start)
+            start_handler  # Allow /start to restart the conversation
         ]
     )
     
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler('help', help_command))
+    
+    # Add a global handler for /start outside of conversations
+    application.add_handler(start_handler)
     
     application.run_polling()
 
