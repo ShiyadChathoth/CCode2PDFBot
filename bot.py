@@ -537,12 +537,24 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab alignment styling
+        # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                @page {{
+                    size: A4;
+                    margin: 20mm;
+                }}
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 0;
+                    padding: 0;
+                }}
+                .page {{
+                    page-break-after: auto;
+                    page-break-inside: avoid;
+                }}
                 .program-title {{
                     font-size: 30px;
                     font-weight: bold;
@@ -550,7 +562,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     margin-bottom: 20px;
                     text-decoration: underline;
                     text-decoration-thickness: 5px;
-                    border-bottom: 3px
+                    border-bottom: 3px;
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
@@ -563,17 +575,37 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     background: #FFFFFF;
                     padding: 5px;
                     border-radius: 3px;
+                    page-break-inside: avoid;
+                }}
+                .code-section {{
+                    page-break-inside: avoid;
+                    margin-bottom: 20px;
                 }}
                 .terminal-view {{
                     margin: 10px 0;
                 }}
+                .output-title {{
+                    font-size: 25px;
+                    text-decoration: underline;
+                    text-decoration-thickness: 5px;
+                    font-weight: bold;
+                    margin-top: 20px;
+                    page-break-after: avoid;
+                }}
+                .output-content {{
+                    page-break-before: avoid;
+                }}
             </style>
         </head>
         <body>
-            <div class="program-title">{html.escape(program_title)}</div>
-            <pre><code>{html.escape(code)}</code></pre>
-            <div class="terminal-view">
-                {reconstruct_terminal_view(context)}
+            <div class="page">
+                <div class="program-title">{html.escape(program_title)}</div>
+                <div class="code-section">
+                    <pre><code>{html.escape(code)}</code></pre>
+                </div>
+                <div class="terminal-view">
+                    {reconstruct_terminal_view(context)}
+                </div>
             </div>
         </body>
         </html>
@@ -588,8 +620,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+        # Generate PDF with specific options to control page breaks
+        subprocess.run([
+            "wkhtmltopdf",
+            "--enable-smart-shrinking",
+            "--print-media-type",
+            "--page-size", "A4",
+            "output.html", 
+            pdf_filename
+        ])
 
         # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
@@ -615,8 +654,8 @@ def reconstruct_terminal_view(context):
         # Double tab width for better PDF readability while maintaining alignment
         raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
         return f"""
-        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-        <div style="
+        <h1 class="output-title">OUTPUT</h1>
+        <div class="output-content" style="
             font-family: 'Courier New', monospace;
             white-space: pre;
             font-size: 18px;
