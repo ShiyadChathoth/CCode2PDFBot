@@ -38,9 +38,7 @@ CODE, RUNNING, TITLE_INPUT = range(3)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.\n\n'
-        'You can provide multiple inputs at once by separating them with spaces.\n'
-        'Example: "5 10 15" to send three separate inputs.'
+        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
     )
     return CODE
 
@@ -73,8 +71,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['last_prompt'] = ""
     context.user_data['pending_messages'] = []  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
-    context.user_data['message_queue'] = []  # Queue for ordered message processing
-    context.user_data['processing_message'] = False  # Flag to indicate we're processing messages
     
     # Store the printf statements from the code for later analysis
     printf_patterns = extract_printf_statements(code)
@@ -105,10 +101,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             context.user_data['process'] = process
             await update.message.reply_text("Code compiled successfully! Running now...")
             
-            # Start message processor
-            asyncio.create_task(process_message_queue(update, context))
-            
-            # Start output reader
             asyncio.create_task(read_process_output(update, context))
             return RUNNING
         else:
@@ -137,10 +129,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                     context.user_data['process'] = process
                     await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
                     
-                    # Start message processor
-                    asyncio.create_task(process_message_queue(update, context))
-                    
-                    # Start output reader
                     asyncio.create_task(read_process_output(update, context))
                     return RUNNING
             
@@ -187,38 +175,6 @@ def extract_printf_statements(code):
             printf_patterns.append(prompt_text)
     
     return printf_patterns
-
-async def process_message_queue(update, context):
-    """Process messages in the queue to ensure proper ordering."""
-    while True:
-        if context.user_data.get('program_completed', False) and not context.user_data['message_queue']:
-            # Program is done and queue is empty, we can exit
-            return
-            
-        if context.user_data['message_queue']:
-            # Process one message at a time
-            context.user_data['processing_message'] = True
-            message_data = context.user_data['message_queue'].pop(0)
-            
-            try:
-                await update.message.reply_text(message_data['text'])
-            except Exception as e:
-                logger.error(f"Failed to send message: {e}")
-                
-            context.user_data['processing_message'] = False
-            
-            # Short delay between messages for better readability
-            await asyncio.sleep(0.1)
-        else:
-            # No messages to process, sleep briefly
-            await asyncio.sleep(0.05)
-
-def add_to_message_queue(context, text):
-    """Add a message to the ordered processing queue."""
-    context.user_data['message_queue'].append({
-        'text': text,
-        'timestamp': datetime.datetime.now()
-    })
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -275,13 +231,13 @@ async def read_process_output(update: Update, context: CallbackContext):
                     
                     context.user_data['program_completed'] = True
                     
-                    # Send the completion message
-                    add_to_message_queue(context, "Program execution completed.")
+                    # Send the completion message and wait for it to be sent
+                    await update.message.reply_text("Program execution completed.")
                     
                     # Wait a bit more before asking for title
                     await asyncio.sleep(0.8)
                     
-                    add_to_message_queue(context, "Please provide a title for your program (or type 'skip' to use default):")
+                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                     return TITLE_INPUT
                 else:
                     # We're already finishing, just wait
@@ -307,14 +263,14 @@ async def read_process_output(update: Update, context: CallbackContext):
                     # Get the last detected prompt
                     last_prompt = context.user_data.get('last_prompt', "unknown")
                     
-                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (multiple inputs can be separated by spaces, or type 'done' to finish):"
+                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
                     
                     execution_log.append({
                         'type': 'system',
                         'message': input_message,
                         'timestamp': datetime.datetime.now()
                     })
-                    add_to_message_queue(context, input_message)
+                    await update.message.reply_text(input_message)
             
             continue
 
@@ -350,7 +306,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'raw': line
                     })
                     
-                    add_to_message_queue(context, f"Error: {line.strip()}")
+                    await update.message.reply_text(f"Error: {line.strip()}")
 
         for task in pending:
             task.cancel()
@@ -376,14 +332,21 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             context.user_data['program_completed'] = True
             
-            # Send completion message
-            add_to_message_queue(context, "Program execution completed.")
+            # Send completion message and wait for it to be sent
+            await update.message.reply_text("Program execution completed.")
             
             # Wait a bit more before asking for title
             await asyncio.sleep(0.8)
             
-            add_to_message_queue(context, "Please provide a title for your program (or type 'skip' to use default):")
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
+
+async def process_output_message(update, message, prefix=""):
+    """Helper function to send output messages with better ordering control"""
+    try:
+        await update.message.reply_text(f"{prefix}{message}")
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
 
 def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace with improved printf prompt detection."""
@@ -405,7 +368,7 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
-            add_to_message_queue(context, f"Program prompt: {buffer}")
+            asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
             
             # We've processed the buffer as a prompt, so we can be waiting for input
             context.user_data['waiting_for_input'] = True
@@ -440,7 +403,7 @@ def process_output_chunk(context, buffer, update):
             execution_log.append(log_entry)
             
             prefix = "Program prompt:" if is_prompt else "Program output:"
-            add_to_message_queue(context, f"{prefix} {line_stripped}")
+            asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
     
     return new_buffer
 
@@ -506,7 +469,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         if context.user_data.get('program_completed', False):
             return await handle_title_input(update, context)
         else:
-            add_to_message_queue(context, "Program is not running anymore.")
+            await update.message.reply_text("Program is not running anymore.")
             return ConversationHandler.END
 
     if user_input.lower() == 'done':
@@ -524,49 +487,33 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         
         context.user_data['program_completed'] = True
         
-        add_to_message_queue(context, "Please provide a title for your program (or type 'skip' to use default):")
+        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
         return TITLE_INPUT
     
-    # Handle multiple inputs (split by spaces)
-    inputs = user_input.split()
+    execution_log.append({
+        'type': 'input',
+        'message': user_input,
+        'timestamp': datetime.datetime.now()
+    })
+    
+    terminal_log.append(user_input + "\n")
     
     # Set the flag that we're sending input to prevent output processing during this time
     context.user_data['is_sending_input'] = True
     
-    if len(inputs) > 1:
-        add_to_message_queue(context, f"Processing multiple inputs: {', '.join(inputs)}")
+    # Send the input confirmation message first and await it to ensure order
+    sent_message = await update.message.reply_text(f"Input sent: {user_input}")
     
-    for idx, single_input in enumerate(inputs):
-        execution_log.append({
-            'type': 'input',
-            'message': single_input,
-            'timestamp': datetime.datetime.now()
-        })
-        
-        terminal_log.append(single_input + "\n")
-        
-        # Add message about which input we're sending (only for multiple inputs)
-        if len(inputs) > 1:
-            add_to_message_queue(context, f"Input {idx+1}/{len(inputs)}: {single_input}")
-        else:
-            add_to_message_queue(context, f"Input sent: {single_input}")
-        
-        # Send the input to the process
-        process.stdin.write((single_input + "\n").encode())
-        await process.stdin.drain()
-        context.user_data['inputs'].append(single_input)
-        
-        # For multiple inputs, wait a bit between inputs
-        if idx < len(inputs) - 1:
-            await asyncio.sleep(0.3)
-    
-    # Reset flags
+    # Only after confirmation is sent, send the input to the process
+    process.stdin.write((user_input + "\n").encode())
+    await process.stdin.drain()
+    context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
     
     # Add a small delay to ensure message ordering
     await asyncio.sleep(0.2)
     
-    # Reset the input sending flag
+    # Reset the flag
     context.user_data['is_sending_input'] = False
     
     return RUNNING
@@ -579,65 +526,16 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     else:
         context.user_data['program_title'] = title
     
-    add_to_message_queue(context, f"Using title: {context.user_data['program_title']}")
-    
-    # Wait for message queue to process this message
-    while context.user_data['message_queue']:
-        await asyncio.sleep(0.1)
-    
+    await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
-async def check_system_capabilities(update):
-    """Check and report if required tools are available"""
-    try:
-        # Check for wkhtmltopdf
-        result = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
-        wkhtmltopdf_path = result.stdout.strip()
-        
-        if not wkhtmltopdf_path:
-            await update.message.reply_text("Error: wkhtmltopdf is not installed on this system.")
-            return False
-            
-        # Check if we can write to current directory
-        test_file = "write_test.txt"
-        try:
-            with open(test_file, "w") as f:
-                f.write("test")
-            os.remove(test_file)
-        except Exception as e:
-            await update.message.reply_text(f"Error: Cannot write to current directory: {str(e)}")
-            return False
-            
-        # Log system information
-        logger.info(f"wkhtmltopdf found at: {wkhtmltopdf_path}")
-        logger.info(f"Current working directory: {os.getcwd()}")
-        logger.info(f"Directory is writable: Yes")
-        
-        return True
-        
-    except Exception as e:
-        await update.message.reply_text(f"Error checking system capabilities: {str(e)}")
-        return False
-
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
-    # First check system capabilities
-    if not await check_system_capabilities(update):
-        return
-        
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
-
-        # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
-        pdf_filename = os.path.abspath(f"{sanitized_title}.pdf")
-        
-        logger.info(f"Generating PDF with filename: {pdf_filename}")
 
         # Generate HTML with proper tab alignment styling
         html_content = f"""
@@ -684,101 +582,122 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
-        # Generate PDF with better error handling
-        try:
-            result = subprocess.run(
-                ["wkhtmltopdf", "output.html", pdf_filename],
-                capture_output=True,
-                text=True,
-                timeout=30  # 30-second timeout
-            )
-            
-            if result.returncode != 0:
-                logger.error(f"wkhtmltopdf error: {result.stderr}")
-                await update.message.reply_text(f"PDF generation failed: {result.stderr}")
-                
-                # Try alternative PDF generation
-                await generate_and_send_pdf_alternative(update, context)
-                return
-        except subprocess.TimeoutExpired:
-            logger.error("wkhtmltopdf process timed out")
-            await update.message.reply_text("PDF generation timed out. Trying alternative method...")
-            
-            # Try alternative PDF generation
-            await generate_and_send_pdf_alternative(update, context)
-            return
-
-        # Check if file exists before sending
-        if not os.path.exists(pdf_filename):
-            logger.error(f"PDF file not found at: {pdf_filename}")
-            await update.message.reply_text("PDF file was not created. Trying alternative method...")
-            
-            # Try alternative PDF generation
-            await generate_and_send_pdf_alternative(update, context)
-            return
-            
-        logger.info(f"PDF file created successfully at: {pdf_filename}, size: {os.path.getsize(pdf_filename)} bytes")
+        # Generate sanitized filename from title
+        # Replace invalid filename characters with underscores and ensure it ends with .pdf
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        pdf_filename = f"{sanitized_title}.pdf"
+        
+        # Generate PDF
+        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
 
         # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
-                filename=os.path.basename(pdf_filename),
+                filename=pdf_filename,
                 caption=f"Execution report for {program_title}"
             )
 
     except Exception as e:
-        logger.exception(f"Failed to generate PDF with wkhtmltopdf: {str(e)}")
-        await update.message.reply_text(f"Failed to generate PDF with primary method. Trying alternative...")
-        
-        # Try alternative PDF generation
-        await generate_and_send_pdf_alternative(update, context)
+        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
-        # Delay cleanup to ensure file is sent
-        await asyncio.sleep(3)
-        await cleanup(context, preserve_pdf=True)
+        await cleanup(context)
 
-async def generate_and_send_pdf_alternative(update: Update, context: CallbackContext):
-    """Alternative PDF generation using ReportLab"""
-    try:
-        # Import ReportLab - make sure it's installed
+
+def reconstruct_terminal_view(context):
+    """Preserve exact terminal formatting with tabs"""
+    terminal_log = context.user_data.get('terminal_log', [])
+    
+    if terminal_log:
+        raw_output = ''.join(terminal_log)
+        # Double tab width for better PDF readability while maintaining alignment
+        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+        return f"""
+        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
+        <div style="
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: 18px;
+            line-height: 1.2;
+            background: #FFFFFF;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        ">{html.escape(raw_output)}</div>
+        """
+    
+    return "<pre>No terminal output available</pre>"
+
+def generate_system_messages_html(system_messages):
+    """Generate HTML for system messages section."""
+    if not system_messages:
+        return "<p>No system messages</p>"
+    
+    html_output = ""
+    
+    for msg in system_messages:
+        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
+        html_output += f"""
+        <div class="system-message-box">
+            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
+            <p>{msg['message']}</p>
+        </div>
+        """
+    
+    return html_output
+
+async def cleanup(context: CallbackContext):
+    process = context.user_data.get('process')
+    if process and process.returncode is None:
+        process.terminate()
         try:
-            from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
-            from reportlab.lib.styles import getSampleStyleSheet
-        except ImportError:
-            await update.message.reply_text("Cannot generate PDF: ReportLab library not installed. Please install it with 'pip install reportlab'.")
-            return
-            
-        code = context.user_data['code']
-        terminal_log = context.user_data['terminal_log']
-        program_title = context.user_data.get('program_title', "C Program Execution Report")
+            await process.wait()
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+    
+    for file in ["temp.c", "temp", "output.html"]:
+        if os.path.exists(file):
+            os.remove(file)
+    
+    for file in os.listdir():
+        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
+            os.remove(file)
+    
+    context.user_data.clear()
+
+async def cancel(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Operation cancelled.")
+    await cleanup(context)
+    return ConversationHandler.END
+
+def main() -> None:
+    try:
+        application = Application.builder().token(TOKEN).build()
         
-        # Create a sanitized filename
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
-        pdf_filename = os.path.abspath(f"{sanitized_title}_alt.pdf")
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
+                RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
+                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)],
+        )
         
-        logger.info(f"Generating alternative PDF with filename: {pdf_filename}")
+        application.add_handler(conv_handler)
         
-        # Create the PDF
-        doc = SimpleDocTemplate(pdf_filename, pagesize=letter)
-        styles = getSampleStyleSheet()
-        
-        # Create content elements
-        elements = []
-        
-        # Add title
-        elements.append(Paragraph(program_title, styles['Title']))
-        elements.append(Spacer(1, 12))
-        
-        # Add code
-        elements.append(Paragraph("Source Code:", styles['Heading2']))
-        elements.append(Preformatted(code, styles['Code']))
-        elements.append(Spacer(1, 12))
-        
-        # Add terminal output
-        elements.append(Paragraph("Output:", styles['Heading2']))
-        terminal_output = ''.join(terminal_log)
-        elements.append(Preformatted(terminal_output
+        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except telegram.error.Conflict as e:
+        logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
+        print("Error: Another instance of this bot is already running. Please stop it and try again.")
+        return
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise
+
+if __name__ == '__main__':
+    main()
