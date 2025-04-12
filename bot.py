@@ -612,7 +612,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         </html>
         """
 
-        with open("output.html", "w") as file:
+        # Write HTML to a file with a fixed name
+        html_filename = "output.html"
+        with open(html_filename, "w") as file:
             file.write(html_content)
 
         # Generate sanitized filename from title
@@ -620,11 +622,17 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
+        # Use a fixed path for the PDF file to avoid issues
+        pdf_path = os.path.join(os.getcwd(), pdf_filename)
+        
+        # Log the output path for debugging
+        logger.info(f"Generating PDF to path: {pdf_path}")
+        
         # Use specific wkhtmltopdf options to control page fill
-        subprocess.run([
+        result = subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
-            "--disable-smart-page-breaks",  # Disable smart page breaks
+            "--disable-smart-page-breaks",
             "--print-media-type",
             "--page-size", "A4",
             "--margin-top", "20mm",
@@ -632,20 +640,38 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             "--margin-left", "20mm",
             "--margin-right", "20mm",
             "--minimum-font-size", "12",
-            "output.html", 
-            pdf_filename
-        ])
-
+            html_filename, 
+            pdf_path
+        ], capture_output=True, text=True)
+        
+        # Check if PDF generation was successful
+        if result.returncode != 0:
+            logger.error(f"wkhtmltopdf error: {result.stderr}")
+            await update.message.reply_text(f"Error generating PDF: {result.stderr}")
+            return ConversationHandler.END
+            
+        # Verify the file exists before sending
+        if not os.path.exists(pdf_path):
+            logger.error(f"PDF file not created at expected path: {pdf_path}")
+            await update.message.reply_text("Error: PDF file was not created.")
+            return ConversationHandler.END
+        
         # Send PDF to user
-        with open(pdf_filename, 'rb') as pdf_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=pdf_file,
-                filename=pdf_filename,
-                caption=f"Execution report for {program_title}"
-            )
+        try:
+            with open(pdf_path, 'rb') as pdf_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=pdf_file,
+                    filename=pdf_filename,
+                    caption=f"Execution report for {program_title}"
+                )
+            logger.info(f"Successfully sent PDF: {pdf_path}")
+        except Exception as e:
+            logger.error(f"Error sending PDF: {str(e)}")
+            await update.message.reply_text(f"Error sending PDF: {str(e)}")
 
     except Exception as e:
+        logger.error(f"Error generating PDF: {str(e)}")
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
