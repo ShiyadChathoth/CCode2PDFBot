@@ -731,13 +731,19 @@ async def cleanup(context: CallbackContext):
             process.kill()
             await process.wait()
     
-    for file in ["temp.c", "temp", "output.html"]:
-        if os.path.exists(file):
-            os.remove(file)
+    # List of files to clean up
+    files_to_clean = ["temp.c", "temp", "output.html"]
     
-    for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
-            os.remove(file)
+    # Clean up the specific files
+    for file in files_to_clean:
+        if os.path.exists(file):
+            try:
+                os.remove(file)
+            except Exception as e:
+                logger.error(f"Error removing file {file}: {str(e)}")
+    
+    # Don't automatically delete PDF files as they might still be needed
+    # Let the system's temp file cleanup handle them
     
     context.user_data.clear()
 
