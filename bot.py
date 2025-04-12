@@ -18,6 +18,7 @@ import time
 import datetime
 import re
 import unicodedata
+import sys
 
 # Set up logging
 logging.basicConfig(
@@ -183,6 +184,7 @@ async def read_process_output(update: Update, context: CallbackContext):
     
     output_seen = False
     read_size = 1024
+    timeout_counter = 0
     
     while True:
         stdout_task = asyncio.create_task(process.stdout.read(read_size))
@@ -191,7 +193,7 @@ async def read_process_output(update: Update, context: CallbackContext):
         done, pending = await asyncio.wait(
             [stdout_task, stderr_task],
             return_when=asyncio.FIRST_COMPLETED,
-            timeout=0.5
+            timeout=0.3  # Reduced timeout to check more frequently
         )
 
         if not done:
@@ -221,28 +223,39 @@ async def read_process_output(update: Update, context: CallbackContext):
                     await asyncio.sleep(0.1)
                     continue
             
-            if output_seen and not context.user_data.get('waiting_for_input', False):
+            # If we've seen output and there's been no new output for a while,
+            # check if we might be waiting for input
+            timeout_counter += 1
+            if output_seen and timeout_counter >= 3 and not context.user_data.get('waiting_for_input', False):
                 if output_buffer:
-                    process_output_chunk(context, output_buffer, update)
-                    output_buffer = ""
-                    context.user_data['output_buffer'] = ""
+                    # Process any remaining output in the buffer
+                    # This is crucial for detecting prompts without newlines
+                    new_buffer = process_output_chunk(context, output_buffer, update)
+                    output_buffer = new_buffer
+                    context.user_data['output_buffer'] = new_buffer
                 
-                context.user_data['waiting_for_input'] = True
-                
-                # Get the last detected prompt
-                last_prompt = context.user_data.get('last_prompt', "unknown")
-                
-                input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
-                
-                execution_log.append({
-                    'type': 'system',
-                    'message': input_message,
-                    'timestamp': datetime.datetime.now()
-                })
-                await update.message.reply_text(input_message)
+                # If we're still not waiting for input after processing the buffer,
+                # and there's been no output for a while, assume we're waiting
+                if not context.user_data.get('waiting_for_input', False) and timeout_counter >= 5:
+                    context.user_data['waiting_for_input'] = True
+                    
+                    # Get the last detected prompt
+                    last_prompt = context.user_data.get('last_prompt', "unknown")
+                    
+                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                    
+                    execution_log.append({
+                        'type': 'system',
+                        'message': input_message,
+                        'timestamp': datetime.datetime.now()
+                    })
+                    await update.message.reply_text(input_message)
             
             continue
 
+        # Reset timeout counter when we get output
+        timeout_counter = 0
+        
         if stdout_task in done:
             stdout_chunk = await stdout_task
             if stdout_chunk:
@@ -300,6 +313,27 @@ def process_output_chunk(context, buffer, update):
     output = context.user_data['output']
     printf_patterns = context.user_data.get('printf_patterns', [])
     
+    # First check if the entire buffer might be a prompt without a newline
+    if buffer and not buffer.endswith('\n'):
+        is_prompt, prompt_text = detect_prompt(buffer, printf_patterns)
+        if is_prompt:
+            context.user_data['last_prompt'] = prompt_text
+            
+            log_entry = {
+                'type': 'prompt',
+                'message': buffer,
+                'timestamp': datetime.datetime.now(),
+                'raw': buffer
+            }
+            
+            execution_log.append(log_entry)
+            asyncio.create_task(update.message.reply_text(f"Program prompt: {buffer}"))
+            
+            # We've processed the buffer as a prompt, so we can be waiting for input
+            context.user_data['waiting_for_input'] = True
+            return ""
+    
+    # Normal line-by-line processing for output with newlines
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
     
     new_buffer = ""
@@ -350,7 +384,7 @@ def detect_prompt(line, printf_patterns):
         
         # If we have a significant match and the pattern ends with a prompt character
         if (len(common_words) >= len(pattern_words) * 0.6 or 
-            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>')))) and len(pattern_words) > 0:
+            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>', ' ')))) and len(pattern_words) > 0:
             return True, line_text
     
     # Input keywords check
@@ -361,8 +395,8 @@ def detect_prompt(line, printf_patterns):
         if keyword in line_lower:
             return True, line_text
     
-    # Check for ending with prompt characters
-    if line_text.rstrip().endswith((':', '?', '>')):
+    # Check for ending with prompt characters - added space as a prompt character
+    if line_text.rstrip().endswith((':', '?', '>', ' ')):
         return True, line_text
     
     # Check for common patterns where a variable name or description is followed by a colon
@@ -371,6 +405,10 @@ def detect_prompt(line, printf_patterns):
     
     # Check for "Enter XXX: " patterns
     if re.search(r'[Ee]nter\s+[^:]+:', line_text):
+        return True, line_text
+    
+    # Additional check for very short outputs that might be prompts
+    if len(line_text) < 10 and not line_text.isdigit():
         return True, line_text
     
     # If none of the above, this is probably not a prompt
