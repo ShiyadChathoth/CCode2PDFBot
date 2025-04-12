@@ -588,12 +588,56 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
+async def check_system_capabilities(update):
+    """Check and report if required tools are available"""
+    try:
+        # Check for wkhtmltopdf
+        result = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
+        wkhtmltopdf_path = result.stdout.strip()
+        
+        if not wkhtmltopdf_path:
+            await update.message.reply_text("Error: wkhtmltopdf is not installed on this system.")
+            return False
+            
+        # Check if we can write to current directory
+        test_file = "write_test.txt"
+        try:
+            with open(test_file, "w") as f:
+                f.write("test")
+            os.remove(test_file)
+        except Exception as e:
+            await update.message.reply_text(f"Error: Cannot write to current directory: {str(e)}")
+            return False
+            
+        # Log system information
+        logger.info(f"wkhtmltopdf found at: {wkhtmltopdf_path}")
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Directory is writable: Yes")
+        
+        return True
+        
+    except Exception as e:
+        await update.message.reply_text(f"Error checking system capabilities: {str(e)}")
+        return False
+
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
+    # First check system capabilities
+    if not await check_system_capabilities(update):
+        return
+        
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
+
+        # Generate sanitized filename from title
+        # Replace invalid filename characters with underscores and ensure it ends with .pdf
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        pdf_filename = os.path.abspath(f"{sanitized_title}.pdf")
+        
+        logger.info(f"Generating PDF with filename: {pdf_filename}")
 
         # Generate HTML with proper tab alignment styling
         html_content = f"""
@@ -640,122 +684,101 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
-        # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
-        pdf_filename = f"{sanitized_title}.pdf"
-        
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+        # Generate PDF with better error handling
+        try:
+            result = subprocess.run(
+                ["wkhtmltopdf", "output.html", pdf_filename],
+                capture_output=True,
+                text=True,
+                timeout=30  # 30-second timeout
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"wkhtmltopdf error: {result.stderr}")
+                await update.message.reply_text(f"PDF generation failed: {result.stderr}")
+                
+                # Try alternative PDF generation
+                await generate_and_send_pdf_alternative(update, context)
+                return
+        except subprocess.TimeoutExpired:
+            logger.error("wkhtmltopdf process timed out")
+            await update.message.reply_text("PDF generation timed out. Trying alternative method...")
+            
+            # Try alternative PDF generation
+            await generate_and_send_pdf_alternative(update, context)
+            return
+
+        # Check if file exists before sending
+        if not os.path.exists(pdf_filename):
+            logger.error(f"PDF file not found at: {pdf_filename}")
+            await update.message.reply_text("PDF file was not created. Trying alternative method...")
+            
+            # Try alternative PDF generation
+            await generate_and_send_pdf_alternative(update, context)
+            return
+            
+        logger.info(f"PDF file created successfully at: {pdf_filename}, size: {os.path.getsize(pdf_filename)} bytes")
 
         # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=pdf_file,
-                filename=pdf_filename,
+                filename=os.path.basename(pdf_filename),
                 caption=f"Execution report for {program_title}"
             )
 
     except Exception as e:
-        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
+        logger.exception(f"Failed to generate PDF with wkhtmltopdf: {str(e)}")
+        await update.message.reply_text(f"Failed to generate PDF with primary method. Trying alternative...")
+        
+        # Try alternative PDF generation
+        await generate_and_send_pdf_alternative(update, context)
     finally:
-        await cleanup(context)
+        # Delay cleanup to ensure file is sent
+        await asyncio.sleep(3)
+        await cleanup(context, preserve_pdf=True)
 
-
-def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs"""
-    terminal_log = context.user_data.get('terminal_log', [])
-    
-    if terminal_log:
-        raw_output = ''.join(terminal_log)
-        # Double tab width for better PDF readability while maintaining alignment
-        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
-        return f"""
-        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-        <div style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-        ">{html.escape(raw_output)}</div>
-        """
-    
-    return "<pre>No terminal output available</pre>"
-
-def generate_system_messages_html(system_messages):
-    """Generate HTML for system messages section."""
-    if not system_messages:
-        return "<p>No system messages</p>"
-    
-    html_output = ""
-    
-    for msg in system_messages:
-        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
-        html_output += f"""
-        <div class="system-message-box">
-            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
-            <p>{msg['message']}</p>
-        </div>
-        """
-    
-    return html_output
-
-async def cleanup(context: CallbackContext):
-    process = context.user_data.get('process')
-    if process and process.returncode is None:
-        process.terminate()
-        try:
-            await process.wait()
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-    
-    for file in ["temp.c", "temp", "output.html"]:
-        if os.path.exists(file):
-            os.remove(file)
-    
-    for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
-            os.remove(file)
-    
-    context.user_data.clear()
-
-async def cancel(update: Update, context: CallbackContext) -> int:
-    add_to_message_queue(context, "Operation cancelled.")
-    await cleanup(context)
-    return ConversationHandler.END
-
-def main() -> None:
+async def generate_and_send_pdf_alternative(update: Update, context: CallbackContext):
+    """Alternative PDF generation using ReportLab"""
     try:
-        application = Application.builder().token(TOKEN).build()
+        # Import ReportLab - make sure it's installed
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
+            from reportlab.lib.styles import getSampleStyleSheet
+        except ImportError:
+            await update.message.reply_text("Cannot generate PDF: ReportLab library not installed. Please install it with 'pip install reportlab'.")
+            return
+            
+        code = context.user_data['code']
+        terminal_log = context.user_data['terminal_log']
+        program_title = context.user_data.get('program_title', "C Program Execution Report")
         
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
-                RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
-                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
+        # Create a sanitized filename
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
+        pdf_filename = os.path.abspath(f"{sanitized_title}_alt.pdf")
         
-        application.add_handler(conv_handler)
+        logger.info(f"Generating alternative PDF with filename: {pdf_filename}")
         
-        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except telegram.error.Conflict as e:
-        logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
-        print("Error: Another instance of this bot is already running. Please stop it and try again.")
-        return
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise
-
-if __name__ == '__main__':
-    main()
+        # Create the PDF
+        doc = SimpleDocTemplate(pdf_filename, pagesize=letter)
+        styles = getSampleStyleSheet()
+        
+        # Create content elements
+        elements = []
+        
+        # Add title
+        elements.append(Paragraph(program_title, styles['Title']))
+        elements.append(Spacer(1, 12))
+        
+        # Add code
+        elements.append(Paragraph("Source Code:", styles['Heading2']))
+        elements.append(Preformatted(code, styles['Code']))
+        elements.append(Spacer(1, 12))
+        
+        # Add terminal output
+        elements.append(Paragraph("Output:", styles['Heading2']))
+        terminal_output = ''.join(terminal_log)
+        elements.append(Preformatted(terminal_output
