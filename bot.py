@@ -20,7 +20,6 @@ import datetime
 import re
 import unicodedata
 import tempfile
-from weasyprint import HTML
 
 # Set up logging
 logging.basicConfig(
@@ -61,7 +60,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "4. Provide input when prompted\n"
         "5. Type 'done' to end program execution early\n"
         "6. Use /cancel at any time to stop the current session\n\n"
-        "After your program finishes, I'll ask you for a title and generate a PDF report."
+        "After your program finishes, I'll ask you for a title and generate a report."
     )
     await update.message.reply_text(help_text)
 
@@ -487,7 +486,7 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
         context.user_data['program_title'] = title
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
-    await generate_and_send_pdf(update, context)
+    await generate_and_send_report(update, context)
     return ConversationHandler.END
 
 async def button_callback(update: Update, context: CallbackContext) -> int:
@@ -540,200 +539,79 @@ async def button_callback(update: Update, context: CallbackContext) -> int:
     elif query.data == 'skip_title':
         context.user_data['program_title'] = "C Program Execution Report"
         await query.edit_message_text(text=f"Using title: {context.user_data['program_title']}")
-        await generate_and_send_pdf(update, context)
+        await generate_and_send_report(update, context)
         return ConversationHandler.END
     
     return RUNNING
 
-async def generate_and_send_pdf(update: Update, context: CallbackContext):
+async def generate_and_send_report(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
-        terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
-
-        # Generate HTML with proper tab alignment styling
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                .program-title {{
-                    font-size: 30px;
-                    font-weight: bold;
-                    text-align: center;
-                    margin-bottom: 20px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    border-bottom: 3px
-                }}
-                pre {{
-                    font-family: 'Courier New', monospace;
-                    white-space: pre;
-                    font-size: 18px;
-                    line-height: 1.3;
-                    tab-size: 8;
-                    -moz-tab-size: 8;
-                    -o-tab-size: 8;
-                    background: #f5f5f5;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border: 1px solid #ddd;
-                    overflow-x: auto;
-                }}
-                .terminal-view {{
-                    margin: 20px 0;
-                    background-color: #f0f0f0;
-                    padding: 15px;
-                    border-radius: 5px;
-                    border: 1px solid #ccc;
-                }}
-                .section-title {{
-                    font-size: 24px;
-                    font-weight: bold;
-                    margin: 30px 0 15px 0;
-                    color: #333;
-                    border-bottom: 2px solid #999;
-                    padding-bottom: 5px;
-                }}
-                .prompt {{
-                    color: purple;
-                    font-weight: bold;
-                }}
-                .input {{
-                    color: green;
-                    font-weight: bold;
-                }}
-                .output {{
-                    color: black;
-                }}
-                .error {{
-                    color: red;
-                    font-weight: bold;
-                }}
-                .system {{
-                    color: blue;
-                    font-style: italic;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                }}
-                th, td {{
-                    border: 1px solid #ddd;
-                    padding: 8px;
-                    text-align: left;
-                }}
-                th {{
-                    background-color: #f2f2f2;
-                    font-weight: bold;
-                }}
-                tr:nth-child(even) {{
-                    background-color: #f9f9f9;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="program-title">{html.escape(program_title)}</div>
-            
-            <div class="section-title">Source Code</div>
-            <pre><code>{html.escape(code)}</code></pre>
-            
-            <div class="section-title">Program Execution</div>
-            <div class="terminal-view">
-                {reconstruct_terminal_view(context)}
-            </div>
-            
-            <div class="section-title">Execution Summary</div>
-            <table>
-                <tr>
-                    <th>Type</th>
-                    <th>Count</th>
-                </tr>
-                <tr>
-                    <td>Inputs</td>
-                    <td>{len(context.user_data.get('inputs', []))}</td>
-                </tr>
-                <tr>
-                    <td>Outputs</td>
-                    <td>{len([e for e in execution_log if e['type'] == 'output'])}</td>
-                </tr>
-                <tr>
-                    <td>Prompts</td>
-                    <td>{len([e for e in execution_log if e['type'] == 'prompt'])}</td>
-                </tr>
-                <tr>
-                    <td>Errors</td>
-                    <td>{len(context.user_data.get('errors', []))}</td>
-                </tr>
-            </table>
-        </body>
-        </html>
-        """
-
-        # Create a temporary HTML file
-        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as html_file:
-            html_file_path = html_file.name
-            html_file.write(html_content.encode('utf-8'))
         
-        # Generate sanitized filename from title
+        # Create a text-based report instead of PDF
+        report = f"=== {program_title} ===\n\n"
+        
+        # Add source code section
+        report += "--- SOURCE CODE ---\n\n"
+        report += code + "\n\n"
+        
+        # Add execution log section
+        report += "--- EXECUTION LOG ---\n\n"
+        
+        for entry in execution_log:
+            timestamp = entry['timestamp'].strftime("%H:%M:%S")
+            
+            if entry['type'] == 'system':
+                if 'Program is waiting for input' not in entry['message']:
+                    report += f"[{timestamp}] SYSTEM: {entry['message']}\n"
+            elif entry['type'] == 'error':
+                report += f"[{timestamp}] ERROR: {entry['message']}\n"
+            elif entry['type'] == 'prompt':
+                report += f"[{timestamp}] PROMPT: {entry['message']}\n"
+            elif entry['type'] == 'input':
+                report += f"[{timestamp}] INPUT: {entry['message']}\n"
+            elif entry['type'] == 'output':
+                report += f"[{timestamp}] OUTPUT: {entry['message']}\n"
+        
+        # Add execution summary
+        report += "\n--- EXECUTION SUMMARY ---\n\n"
+        report += f"Inputs: {len(context.user_data.get('inputs', []))}\n"
+        report += f"Outputs: {len([e for e in execution_log if e['type'] == 'output'])}\n"
+        report += f"Prompts: {len([e for e in execution_log if e['type'] == 'prompt'])}\n"
+        report += f"Errors: {len(context.user_data.get('errors', []))}\n"
+        
+        # Save report to file
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
-        pdf_filename = f"{sanitized_title}.pdf"
-        pdf_path = os.path.join(os.getcwd(), pdf_filename)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
+        report_filename = f"{sanitized_title}.txt"
+        report_path = os.path.join(os.getcwd(), report_filename)
         
-        # Generate PDF using WeasyPrint
-        HTML(html_file_path).write_pdf(pdf_path)
+        with open(report_path, 'w') as report_file:
+            report_file.write(report)
         
-        # Send the PDF file
-        with open(pdf_path, 'rb') as pdf_file:
+        # Send the report file
+        with open(report_path, 'rb') as report_file:
             await update.effective_chat.send_document(
-                document=pdf_file,
-                filename=pdf_filename,
-                caption=f"Here's your {program_title} PDF report."
+                document=report_file,
+                filename=report_filename,
+                caption=f"Here's your {program_title} report."
             )
         
         # Clean up temporary files
-        os.unlink(html_file_path)
-        os.unlink(pdf_path)
+        os.unlink(report_path)
         
         # Send a completion message
         await update.effective_chat.send_message(
-            "PDF report generated and sent successfully! Use /start to compile another program."
+            "Report generated and sent successfully! Use /start to compile another program."
         )
         
     except Exception as e:
-        logger.error(f"Error generating PDF: {str(e)}")
+        logger.error(f"Error generating report: {str(e)}")
         await update.effective_chat.send_message(
-            f"Error generating PDF: {str(e)}\n\nPlease try again or contact the administrator."
+            f"Error generating report: {str(e)}\n\nPlease try again or contact the administrator."
         )
-
-def reconstruct_terminal_view(context):
-    """Reconstruct terminal view from execution log."""
-    execution_log = context.user_data['execution_log']
-    terminal_html = "<pre>"
-    
-    for entry in execution_log:
-        if entry['type'] == 'system':
-            if 'Program execution completed' in entry['message']:
-                terminal_html += f"<span class='system'>{html.escape(entry['message'])}</span>\n"
-            elif 'Program is waiting for input' in entry['message']:
-                # Skip the internal waiting messages
-                continue
-            else:
-                terminal_html += f"<span class='system'>{html.escape(entry['message'])}</span>\n"
-        elif entry['type'] == 'error':
-            terminal_html += f"<span class='error'>{html.escape(entry['message'])}</span>\n"
-        elif entry['type'] == 'prompt':
-            terminal_html += f"<span class='prompt'>{html.escape(entry['message'])}</span>\n"
-        elif entry['type'] == 'input':
-            terminal_html += f"<span class='input'>Input: {html.escape(entry['message'])}</span>\n"
-        elif entry['type'] == 'output':
-            terminal_html += f"<span class='output'>{html.escape(entry['message'])}</span>\n"
-    
-    terminal_html += "</pre>"
-    return terminal_html
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     """Cancel and end the conversation."""
