@@ -191,6 +191,7 @@ async def read_process_output(update: Update, context: CallbackContext):
     
     # Add a flag to track if we're currently sending input
     context.user_data['is_sending_input'] = False
+    max_timeout = 10  # Maximum number of timeouts before forcing completion
     
     while True:
         # If we're currently sending input, wait a bit to ensure proper message order
@@ -204,13 +205,40 @@ async def read_process_output(update: Update, context: CallbackContext):
         done, pending = await asyncio.wait(
             [stdout_task, stderr_task],
             return_when=asyncio.FIRST_COMPLETED,
-            timeout=0.3  # Reduced timeout to check more frequently
+            timeout=0.3
         )
 
         if not done:
             for task in pending:
                 task.cancel()
             
+            # Force completion after too many timeouts with no activity
+            if timeout_counter > max_timeout and output_seen and not context.user_data.get('finishing_initiated', False):
+                logger.info("Forcing completion due to no activity")
+                context.user_data['finishing_initiated'] = True
+                
+                # Process any remaining output
+                if output_buffer:
+                    process_output_chunk(context, output_buffer, update)
+                    output_buffer = ""
+                    context.user_data['output_buffer'] = ""
+                
+                # Wait to ensure all messages are sent
+                await asyncio.sleep(1.5)
+                
+                # Mark program as complete
+                context.user_data['program_completed'] = True
+                
+                await update.message.reply_text("Program appears to be idle. Execution completed.")
+                
+                # Force the asking for title
+                await asyncio.sleep(0.8)
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                
+                # Force state transition
+                return TITLE_INPUT
+            
+            # Check if process has completed
             if process.returncode is not None:
                 if output_buffer:
                     process_output_chunk(context, output_buffer, update)
@@ -244,6 +272,37 @@ async def read_process_output(update: Update, context: CallbackContext):
                     # We're already finishing, just wait
                     await asyncio.sleep(0.1)
                     continue
+            
+            # If we've seen output and there's been no new output for a while,
+            # check if we might be waiting for input
+            timeout_counter += 1
+            if output_seen and timeout_counter >= 3 and not context.user_data.get('waiting_for_input', False):
+                if output_buffer:
+                    # Process any remaining output in the buffer
+                    new_buffer = process_output_chunk(context, output_buffer, update)
+                    output_buffer = new_buffer
+                    context.user_data['output_buffer'] = new_buffer
+                
+                # If we're still not waiting for input after processing the buffer,
+                # and there's been no output for a while, assume we're waiting
+                if not context.user_data.get('waiting_for_input', False) and timeout_counter >= 5:
+                    context.user_data['waiting_for_input'] = True
+                    
+                    # Get the last detected prompt
+                    last_prompt = context.user_data.get('last_prompt', "unknown")
+                    
+                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                    
+                    execution_log.append({
+                        'type': 'system',
+                        'message': input_message,
+                        'timestamp': datetime.datetime.now()
+                    })
+                    await update.message.reply_text(input_message)
+            
+            continue
+
+        # Rest of the function remains unchanged
             
             # If we've seen output and there's been no new output for a while,
             # check if we might be waiting for input
