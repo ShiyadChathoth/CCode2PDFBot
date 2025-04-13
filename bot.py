@@ -530,6 +530,8 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
+# Only showing the parts that need to be modified - replace these functions in the original code
+
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
@@ -537,7 +539,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with standardized tab width for C code and page fill settings
+        # Generate HTML with proper tab spacing for C code and page fill settings
         html_content = f"""
         <html>
         <head>
@@ -546,7 +548,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     font-family: Arial, sans-serif; 
                     margin: 20px;
                     padding: 0;
-                    counter-reset: page;
                 }}
                 .program-title {{
                     font-size: 30px;
@@ -577,19 +578,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 /* Page break control styles */
                 .page-container {{
                     page-break-inside: avoid;
-                    max-height: 100vh; /* Fill first page completely */
-                    min-height: 90vh; /* Ensure minimum height */
-                    display: flex;
-                    flex-direction: column;
+                    min-height: 90vh; /* Fill page more completely */
                 }}
                 .page-break {{
                     page-break-before: always;
-                    counter-increment: page;
-                }}
-                .page-header {{
-                    text-align: center;
-                    margin-bottom: 10px;
-                    font-weight: bold;
                 }}
                 @media print {{
                     .page-container {{
@@ -608,7 +600,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <div class="page-break"></div>
             
             <div class="page-container">
-                <div class="page-header">Output</div>
+                <h2>Program Output</h2>
                 <div class="terminal-view">
                     {reconstruct_terminal_view(context)}
                 </div>
@@ -621,12 +613,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             file.write(html_content)
 
         # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with options to ensure page breaks work properly
+        # Generate PDF with options for proper page breaks
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
@@ -652,7 +643,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
-
 
 def reconstruct_terminal_view(context):
     """Preserve exact terminal formatting with standardized tabs for C programs"""
