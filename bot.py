@@ -690,6 +690,45 @@ def reconstruct_terminal_view(context):
         raw_output = ''.join(terminal_log)
         # Use standard C tab width (4 spaces per tab)
         raw_output = raw_output.expandtabs(4) 
+        
+        # Check if the output contains a table structure and format it accordingly
+        if "PID" in raw_output and "Burst Time" in raw_output and "Turnaround Time" in raw_output:
+            # Try to parse and format the table for better PDF display
+            try:
+                # Extract table data (simplified approach)
+                table_html = format_table_from_output(raw_output)
+                return f"""
+                <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
+                <div class="terminal-output">{html.escape(raw_output)}</div>
+                """
+            except:
+                # Fallback to regular output
+                pass
+                
+        return f"""
+        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
+        <div class="terminal-output">{html.escape(raw_output)}</div>
+        """
+    
+    return "<pre>No terminal output available</pre>"
+
+def format_table_from_output(raw_output):
+    """Helper function to format terminal table outputs for better PDF display"""
+    # This is a placeholder - you would implement logic to detect and format tables
+    # For now, we're just returning the raw output
+    return raw_output
+def format_table_from_output(raw_output):
+    """Helper function to format terminal table outputs for better PDF display"""
+    # This is a placeholder - you would implement logic to detect and format tables
+    # For now, we're just returning the raw output
+    return raw_outputdef reconstruct_terminal_view(context):
+    """Preserve exact terminal formatting with standardized tabs for C programs"""
+    terminal_log = context.user_data.get('terminal_log', [])
+    
+    if terminal_log:
+        raw_output = ''.join(terminal_log)
+        # Use standard C tab width (4 spaces per tab)
+        raw_output = raw_output.expandtabs(4) 
         return f"""
         <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
         <div style="
