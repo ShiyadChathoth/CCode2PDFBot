@@ -537,12 +537,17 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab alignment styling
+        # Generate HTML with standardized tab width for C code and page fill settings
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                body {{ 
+                    font-family: Arial, sans-serif; 
+                    margin: 20px;
+                    padding: 0;
+                    counter-reset: page;
+                }}
                 .program-title {{
                     font-size: 30px;
                     font-weight: bold;
@@ -550,30 +555,63 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     margin-bottom: 20px;
                     text-decoration: underline;
                     text-decoration-thickness: 5px;
-                    border-bottom: 3px
+                    border-bottom: 3px solid black;
+                    padding-bottom: 10px;
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
                     font-size: 18px;
                     line-height: 1.3;
-                    tab-size: 8;
-                    -moz-tab-size: 8;
-                    -o-tab-size: 8;
+                    tab-size: 4; /* Standard tab size for C code */
+                    -moz-tab-size: 4;
+                    -o-tab-size: 4;
                     background: #FFFFFF;
                     padding: 5px;
                     border-radius: 3px;
+                    overflow-x: auto;
                 }}
                 .terminal-view {{
                     margin: 10px 0;
                 }}
+                /* Page break control styles */
+                .page-container {{
+                    page-break-inside: avoid;
+                    max-height: 100vh; /* Fill first page completely */
+                    min-height: 90vh; /* Ensure minimum height */
+                    display: flex;
+                    flex-direction: column;
+                }}
+                .page-break {{
+                    page-break-before: always;
+                    counter-increment: page;
+                }}
+                .page-header {{
+                    text-align: center;
+                    margin-bottom: 10px;
+                    font-weight: bold;
+                }}
+                @media print {{
+                    .page-container {{
+                        height: 100vh;
+                        page-break-after: always;
+                    }}
+                }}
             </style>
         </head>
         <body>
-            <div class="program-title">{html.escape(program_title)}</div>
-            <pre><code>{html.escape(code)}</code></pre>
-            <div class="terminal-view">
-                {reconstruct_terminal_view(context)}
+            <div class="page-container">
+                <div class="program-title">{html.escape(program_title)}</div>
+                <pre><code>{html.escape(code)}</code></pre>
+            </div>
+
+            <div class="page-break"></div>
+            
+            <div class="page-container">
+                <div class="page-header">Output</div>
+                <div class="terminal-view">
+                    {reconstruct_terminal_view(context)}
+                </div>
             </div>
         </body>
         </html>
@@ -588,8 +626,18 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+        # Generate PDF with options to ensure page breaks work properly
+        subprocess.run([
+            "wkhtmltopdf",
+            "--enable-smart-shrinking",
+            "--margin-top", "15mm",
+            "--margin-bottom", "15mm",
+            "--margin-left", "15mm",
+            "--margin-right", "15mm",
+            "--page-size", "A4",
+            "output.html", 
+            pdf_filename
+        ])
 
         # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
@@ -607,13 +655,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs"""
+    """Preserve exact terminal formatting with standardized tabs for C programs"""
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
         raw_output = ''.join(terminal_log)
-        # Double tab width for better PDF readability while maintaining alignment
-        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+        # Use standard C tab width (4 spaces per tab)
+        raw_output = raw_output.expandtabs(4) 
         return f"""
         <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
         <div style="
@@ -625,6 +673,9 @@ def reconstruct_terminal_view(context):
             padding: 10px;
             border-radius: 3px;
             overflow-x: auto;
+            tab-size: 4; /* Standard C tab size */
+            -moz-tab-size: 4;
+            -o-tab-size: 4;
         ">{html.escape(raw_output)}</div>
         """
     
