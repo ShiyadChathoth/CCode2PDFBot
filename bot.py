@@ -539,10 +539,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Calculate approximate code size to determine if it will fit on one page
-        code_lines = code.count('\n') + 1
-        estimated_height = code_lines * 22  # Rough estimate of line height in pixels
-        
         # Generate HTML with forced page layout
         html_content = f"""
         <html>
@@ -711,17 +707,14 @@ def reconstruct_terminal_view(context):
         """
     
     return "<pre>No terminal output available</pre>"
+    
 
 def format_table_from_output(raw_output):
     """Helper function to format terminal table outputs for better PDF display"""
     # This is a placeholder - you would implement logic to detect and format tables
     # For now, we're just returning the raw output
     return raw_output
-def format_table_from_output(raw_output):
-    """Helper function to format terminal table outputs for better PDF display"""
-    # This is a placeholder - you would implement logic to detect and format tables
-    # For now, we're just returning the raw output
-    return raw_outputdef reconstruct_terminal_view(context):
+    
     """Preserve exact terminal formatting with standardized tabs for C programs"""
     terminal_log = context.user_data.get('terminal_log', [])
     
