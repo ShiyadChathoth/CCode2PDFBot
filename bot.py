@@ -539,7 +539,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab spacing for C code and page fill settings
+        # Generate HTML with proper tab spacing for C code and improved page filling
         html_content = f"""
         <html>
         <head>
@@ -575,18 +575,27 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .terminal-view {{
                     margin: 10px 0;
                 }}
-                /* Page break control styles */
+                /* Improved page break control styles */
                 .page-container {{
                     page-break-inside: avoid;
-                    min-height: 90vh; /* Fill page more completely */
+                    min-height: 95vh; /* Fill page more completely */
+                    display: flex;
+                    flex-direction: column;
+                }}
+                .code-container {{
+                    flex-grow: 1; /* Allow code section to grow and fill available space */
+                    overflow: auto;
                 }}
                 .page-break {{
                     page-break-before: always;
+                    height: 1px;
+                    width: 100%;
                 }}
                 @media print {{
                     .page-container {{
                         height: 100vh;
                         page-break-after: always;
+                        overflow: hidden;
                     }}
                 }}
             </style>
@@ -594,7 +603,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <body>
             <div class="page-container">
                 <div class="program-title">{html.escape(program_title)}</div>
-                <pre><code>{html.escape(code)}</code></pre>
+                <div class="code-container">
+                    <pre><code>{html.escape(code)}</code></pre>
+                </div>
             </div>
 
             <div class="page-break"></div>
@@ -617,7 +628,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with options for proper page breaks
+        # Generate PDF with improved options for proper page filling and breaks
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
@@ -626,6 +637,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             "--margin-left", "15mm",
             "--margin-right", "15mm",
             "--page-size", "A4",
+            "--no-background",  # Better for print quality
+            "--print-media-type",  # Apply print media CSS rules
             "output.html", 
             pdf_filename
         ])
@@ -666,6 +679,8 @@ def reconstruct_terminal_view(context):
             tab-size: 4; /* Standard C tab size */
             -moz-tab-size: 4;
             -o-tab-size: 4;
+            flex-grow: 1; /* Fill available space */
+            min-height: 80vh; /* Minimum height to fill most of page */
         ">{html.escape(raw_output)}</div>
         """
     
