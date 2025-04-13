@@ -539,15 +539,24 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab spacing for C code and improved page filling
+        # Calculate approximate code size to determine if it will fit on one page
+        code_lines = code.count('\n') + 1
+        estimated_height = code_lines * 22  # Rough estimate of line height in pixels
+        
+        # Generate HTML with forced page layout
         html_content = f"""
         <html>
         <head>
             <style>
+                @page {{
+                    size: A4;
+                    margin: 15mm;
+                }}
                 body {{ 
                     font-family: Arial, sans-serif; 
-                    margin: 20px;
+                    margin: 0;
                     padding: 0;
+                    counter-reset: page;
                 }}
                 .program-title {{
                     font-size: 30px;
@@ -561,61 +570,71 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
-                    white-space: pre;
-                    font-size: 18px;
-                    line-height: 1.3;
-                    tab-size: 4; /* Standard tab size for C code */
+                    white-space: pre-wrap;  /* Allow wrapping for very long lines */
+                    font-size: 16px;
+                    line-height: 1.4;
+                    tab-size: 4;
                     -moz-tab-size: 4;
                     -o-tab-size: 4;
                     background: #FFFFFF;
                     padding: 5px;
                     border-radius: 3px;
-                    overflow-x: auto;
+                    overflow: visible;
                 }}
-                .terminal-view {{
-                    margin: 10px 0;
-                }}
-                /* Improved page break control styles */
-                .page-container {{
+                .code-section {{
                     page-break-inside: avoid;
-                    min-height: 95vh; /* Fill page more completely */
-                    display: flex;
-                    flex-direction: column;
+                    height: calc(100vh - 100px);  /* Force to take most of page height */
+                    overflow: visible;
                 }}
-                .code-container {{
-                    flex-grow: 1; /* Allow code section to grow and fill available space */
-                    overflow: auto;
+                .output-section {{
+                    page-break-before: always;
                 }}
+                .terminal-output {{
+                    font-family: 'Courier New', monospace;
+                    white-space: pre;
+                    font-size: 16px;
+                    line-height: 1.4;
+                    background: #FFFFFF;
+                    padding: 10px;
+                    border-radius: 3px;
+                    overflow: visible;
+                }}
+                /* Hard page break */
                 .page-break {{
                     page-break-before: always;
-                    height: 1px;
-                    width: 100%;
+                    display: block;
+                    height: 0;
+                    clear: both;
                 }}
-                @media print {{
-                    .page-container {{
-                        height: 100vh;
-                        page-break-after: always;
-                        overflow: hidden;
-                    }}
+                
+                /* Force table layout for output tables */
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    page-break-inside: avoid;
+                }}
+                td, th {{
+                    padding: 8px;
+                    text-align: left;
+                    border: 1px solid #ddd;
                 }}
             </style>
         </head>
         <body>
-            <div class="page-container">
+            <!-- First page - Code section -->
+            <section class="code-section">
                 <div class="program-title">{html.escape(program_title)}</div>
-                <div class="code-container">
-                    <pre><code>{html.escape(code)}</code></pre>
-                </div>
-            </div>
-
+                <pre><code>{html.escape(code)}</code></pre>
+            </section>
+            
+            <!-- Force page break -->
             <div class="page-break"></div>
             
-            <div class="page-container">
+            <!-- Second page - Output section -->
+            <section class="output-section">
                 <h2>Program Output</h2>
-                <div class="terminal-view">
-                    {reconstruct_terminal_view(context)}
-                </div>
-            </div>
+                {reconstruct_terminal_view(context)}
+            </section>
         </body>
         </html>
         """
@@ -628,7 +647,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with improved options for proper page filling and breaks
+        # Generate PDF with more aggressive options to control page breaks
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
@@ -637,8 +656,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             "--margin-left", "15mm",
             "--margin-right", "15mm",
             "--page-size", "A4",
-            "--no-background",  # Better for print quality
             "--print-media-type",  # Apply print media CSS rules
+            "--disable-external-links",  # Faster rendering
+            "--disable-internal-links",  # Faster rendering
+            "--no-background",  # Better for print quality
+            "--disable-javascript",  # Prevents any script-based modifications
+            "--load-error-handling", "ignore",  # Continue on errors
+            "--load-media-error-handling", "ignore",  # Continue on media errors
+            "--zoom", "1.0",  # Control scaling
             "output.html", 
             pdf_filename
         ])
