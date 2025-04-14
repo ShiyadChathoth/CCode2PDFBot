@@ -393,110 +393,81 @@ def process_output_chunk(context, buffer, update):
             if is_prompt:
                 context.user_data['last_prompt'] = prompt_text
                 
-            log_entry = {
-                'type': 'prompt' if is_prompt else 'output',
-                'message': line_stripped,
-                'timestamp': datetime.datetime.now(),
-                'raw': line
-            }
-            
-            execution_log.append(log_entry)
-            
-            prefix = "Program prompt:" if is_prompt else "Program output:"
-            asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
+                log_entry = {
+                    'type': 'prompt',
+                    'message': line_stripped,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': line
+                }
+                
+                execution_log.append(log_entry)
+                asyncio.create_task(process_output_message(update, line_stripped, "Program prompt: "))
+                
+                # If this is a prompt, we might be waiting for input
+                if not line_stripped.endswith('\n'):
+                    context.user_data['waiting_for_input'] = True
+            else:
+                log_entry = {
+                    'type': 'output',
+                    'message': line_stripped,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': line
+                }
+                
+                execution_log.append(log_entry)
+                asyncio.create_task(process_output_message(update, line_stripped, "Program output: "))
     
     return new_buffer
 
-def detect_prompt(line, printf_patterns):
-    """Enhanced detection for printf prompts. Returns (is_prompt, prompt_text)"""
-    line_text = line.strip()
+def detect_prompt(text, printf_patterns):
+    """Detect if a line of text is likely a prompt for user input."""
+    # Check if the text ends with common prompt characters
+    if text.rstrip().endswith((':', '?', '>', '-', '=', '>')):
+        return True, text.rstrip()
     
-    # First check if the line matches or closely matches any extracted printf patterns
+    # Check if the text matches any of the printf patterns we extracted
     for pattern in printf_patterns:
-        # Direct match
-        if pattern in line_text:
-            return True, line_text
-        
-        # Fuzzy match - check if most of the pattern appears in the line
-        # This helps with format specifiers that have been replaced with actual values
-        pattern_words = set(re.findall(r'\w+', pattern))
-        line_words = set(re.findall(r'\w+', line_text))
-        common_words = pattern_words.intersection(line_words)
-        
-        # If we have a significant match and the pattern ends with a prompt character
-        if (len(common_words) >= len(pattern_words) * 0.6 or 
-            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>', ' ')))) and len(pattern_words) > 0:
-            return True, line_text
+        if pattern in text:
+            return True, text.rstrip()
     
-    # Input keywords check
-    input_keywords = ['enter', 'input', 'type', 'provide', 'give', 'value', 'values']
-    line_lower = line_text.lower()
+    # Check for common prompt phrases
+    prompt_phrases = [
+        "enter", "input", "type", "provide", "give", "select", "choose",
+        "please", "value", "number", "name", "press", "continue"
+    ]
     
-    for keyword in input_keywords:
-        if keyword in line_lower:
-            return True, line_text
+    lower_text = text.lower()
+    for phrase in prompt_phrases:
+        if phrase in lower_text:
+            return True, text.rstrip()
     
-    # Check for ending with prompt characters - added space as a prompt character
-    if line_text.rstrip().endswith((':', '?', '>', ' ')):
-        return True, line_text
-    
-    # Check for common patterns where a variable name or description is followed by a colon
-    if re.search(r'[A-Za-z0-9_]+\s*:', line_text):
-        return True, line_text
-    
-    # Check for "Enter XXX: " patterns
-    if re.search(r'[Ee]nter\s+[^:]+:', line_text):
-        return True, line_text
-    
-    # Additional check for very short outputs that might be prompts
-    if len(line_text) < 10 and not line_text.isdigit():
-        return True, line_text
-    
-    # If none of the above, this is probably not a prompt
     return False, ""
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
     process = context.user_data.get('process')
-    execution_log = context.user_data['execution_log']
-    terminal_log = context.user_data['terminal_log']
-
-    # If program is already completed, treat this as title input
-    if context.user_data.get('program_completed', False):
-        return await handle_title_input(update, context)
-
-    if not process or process.returncode is not None:
-        if context.user_data.get('program_completed', False):
-            return await handle_title_input(update, context)
-        else:
-            await update.message.reply_text("Program is not running anymore.")
-            return ConversationHandler.END
-
+    
     if user_input.lower() == 'done':
-        execution_log.append({
-            'type': 'system',
-            'message': 'User terminated the program.',
-            'timestamp': datetime.datetime.now()
-        })
-        await process.stdin.drain()
-        process.stdin.close()
-        await process.wait()
-        
-        # Add delay to ensure all output is processed
-        await asyncio.sleep(1)
+        if process and process.returncode is None:
+            process.terminate()
+            try:
+                await process.wait()
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
         
         context.user_data['program_completed'] = True
-        
+        await update.message.reply_text("Program execution terminated by user.")
         await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
         return TITLE_INPUT
     
-    execution_log.append({
-        'type': 'input',
-        'message': user_input,
-        'timestamp': datetime.datetime.now()
-    })
+    if not process or process.returncode is not None:
+        await update.message.reply_text("No active program is running. Please start a new session with /start.")
+        return ConversationHandler.END
     
-    terminal_log.append(user_input + "\n")
+    if not context.user_data.get('waiting_for_input', False):
+        await update.message.reply_text("The program is not currently waiting for input. Please wait for a prompt.")
+        return RUNNING
     
     # Set the flag that we're sending input to prevent output processing during this time
     context.user_data['is_sending_input'] = True
@@ -530,8 +501,6 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
-# Only showing the parts that need to be modified - replace these functions in the original code
-
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
@@ -539,7 +508,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with forced page layout
+        # Generate HTML with improved page layout to fill page 1 completely
         html_content = f"""
         <html>
         <head>
@@ -577,11 +546,25 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-radius: 3px;
                     overflow: visible;
                 }}
+                /* MODIFIED: Code section now fills the entire first page */
                 .code-section {{
-                    page-break-inside: avoid;
-                    height: calc(100vh - 100px);  /* Force to take most of page height */
+                    min-height: 100vh;
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: column;
+                }}
+                .code-container {{
+                    flex: 1;
                     overflow: visible;
                 }}
+                /* MODIFIED: Force page break after code section */
+                .page-break {{
+                    page-break-after: always;
+                    height: 0;
+                    visibility: hidden;
+                    display: block;
+                }}
+                /* MODIFIED: Output section starts on a new page */
                 .output-section {{
                     page-break-before: always;
                 }}
@@ -595,14 +578,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-radius: 3px;
                     overflow: visible;
                 }}
-                /* Hard page break */
-                .page-break {{
-                    page-break-before: always;
-                    display: block;
-                    height: 0;
-                    clear: both;
-                }}
-                
                 /* Force table layout for output tables */
                 table {{
                     width: 100%;
@@ -614,13 +589,28 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     text-align: left;
                     border: 1px solid #ddd;
                 }}
+                /* ADDED: Footer to fill remaining space on page 1 */
+                .page-footer {{
+                    margin-top: auto;
+                    text-align: center;
+                    font-size: 12px;
+                    color: #666;
+                    padding: 10px 0;
+                    border-top: 1px solid #ddd;
+                }}
             </style>
         </head>
         <body>
-            <!-- First page - Code section -->
+            <!-- First page - Code section with flex layout to fill page -->
             <section class="code-section">
                 <div class="program-title">{html.escape(program_title)}</div>
-                <pre><code>{html.escape(code)}</code></pre>
+                <div class="code-container">
+                    <pre><code>{html.escape(code)}</code></pre>
+                </div>
+                <!-- Footer to push content up and fill page -->
+                <div class="page-footer">
+                    Generated on {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                </div>
             </section>
             
             <!-- Force page break -->
@@ -643,7 +633,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with more aggressive options to control page breaks
+        # Generate PDF with improved options to control page breaks and filling
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
@@ -660,6 +650,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             "--load-error-handling", "ignore",  # Continue on errors
             "--load-media-error-handling", "ignore",  # Continue on media errors
             "--zoom", "1.0",  # Control scaling
+            # ADDED: These options help ensure content fills pages properly
+            "--enable-local-file-access",
+            "--footer-line",  # Add a line at the footer
+            "--footer-center", "Page [page] of [topage]",  # Add page numbers
+            "--footer-font-size", "9",
             "output.html", 
             pdf_filename
         ])
@@ -714,52 +709,6 @@ def format_table_from_output(raw_output):
     # This is a placeholder - you would implement logic to detect and format tables
     # For now, we're just returning the raw output
     return raw_output
-    
-    """Preserve exact terminal formatting with standardized tabs for C programs"""
-    terminal_log = context.user_data.get('terminal_log', [])
-    
-    if terminal_log:
-        raw_output = ''.join(terminal_log)
-        # Use standard C tab width (4 spaces per tab)
-        raw_output = raw_output.expandtabs(4) 
-        return f"""
-        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-        <div style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-            tab-size: 4; /* Standard C tab size */
-            -moz-tab-size: 4;
-            -o-tab-size: 4;
-            flex-grow: 1; /* Fill available space */
-            min-height: 80vh; /* Minimum height to fill most of page */
-        ">{html.escape(raw_output)}</div>
-        """
-    
-    return "<pre>No terminal output available</pre>"
-
-def generate_system_messages_html(system_messages):
-    """Generate HTML for system messages section."""
-    if not system_messages:
-        return "<p>No system messages</p>"
-    
-    html_output = ""
-    
-    for msg in system_messages:
-        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
-        html_output += f"""
-        <div class="system-message-box">
-            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
-            <p>{msg['message']}</p>
-        </div>
-        """
-    
-    return html_output
 
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
