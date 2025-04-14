@@ -558,15 +558,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     overflow: visible;
                 }}
                 /* MODIFIED: Force page break after code section */
-                .page-break {{
-                    page-break-after: always;
-                    height: 0;
-                    visibility: hidden;
-                    display: block;
-                }}
+             
                 /* MODIFIED: Output section starts on a new page */
                 .output-section {{
-                    page-break-before: always;
+                   
                 }}
                 .terminal-output {{
                     font-family: 'Courier New', monospace;
@@ -612,11 +607,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     Generated on {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 </div>
             </section>
-            
-            <!-- Force page break -->
-            <div class="page-break"></div>
-            
-            <!-- Second page - Output section -->
             <section class="output-section">
                 <h2>Program Output</h2>
                 {reconstruct_terminal_view(context)}
