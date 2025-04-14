@@ -1,3 +1,4 @@
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -539,20 +540,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with forced page layout
+        # Generate HTML with proper tab spacing for C code and improved page filling
         html_content = f"""
         <html>
         <head>
             <style>
-                @page {{
-                    size: A4;
-                    margin: 15mm;
-                }}
                 body {{ 
                     font-family: Arial, sans-serif; 
-                    margin: 0;
+                    margin: 20px;
                     padding: 0;
-                    counter-reset: page;
                 }}
                 .program-title {{
                     font-size: 30px;
@@ -566,60 +562,61 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
-                    white-space: pre-wrap;  /* Allow wrapping for very long lines */
-                    font-size: 16px;
-                    line-height: 1.4;
-                    tab-size: 4;
+                    white-space: pre;
+                    font-size: 18px;
+                    line-height: 1.3;
+                    tab-size: 4; /* Standard tab size for C code */
                     -moz-tab-size: 4;
                     -o-tab-size: 4;
                     background: #FFFFFF;
                     padding: 5px;
                     border-radius: 3px;
-                    overflow: visible;
+                    overflow-x: auto;
                 }}
-                .code-section {{
+                .terminal-view {{
+                    margin: 10px 0;
+                }}
+                /* Improved page break control styles */
+                .page-container {{
                     page-break-inside: avoid;
-                    height: calc(100vh - 100px);  /* Force to take most of page height */
-                    overflow: visible;
+                    min-height: 95vh; /* Fill page more completely */
+                    display: flex;
+                    flex-direction: column;
                 }}
-                .output-section {{
+                .code-container {{
+                    flex-grow: 1; /* Allow code section to grow and fill available space */
+                    overflow: auto;
+                }}
+                .page-break {{
                     page-break-before: always;
-                }}
-                .terminal-output {{
-                    font-family: 'Courier New', monospace;
-                    white-space: pre;
-                    font-size: 16px;
-                    line-height: 1.4;
-                    background: #FFFFFF;
-                    padding: 10px;
-                    border-radius: 3px;
-                    overflow: visible;
-                }}
-                /* Hard page break */
-                
-                /* Force table layout for output tables */
-                table {{
+                    height: 1px;
                     width: 100%;
-                    border-collapse: collapse;
-                    page-break-inside: avoid;
                 }}
-                td, th {{
-                    padding: 8px;
-                    text-align: left;
-                    border: 1px solid #ddd;
+                @media print {{
+                    .page-container {{
+                        height: 100vh;
+                        page-break-after: always;
+                        overflow: hidden;
+                    }}
                 }}
             </style>
         </head>
         <body>
-            <!-- First page - Code section -->
-            <section class="code-section">
+            <div class="page-container">
                 <div class="program-title">{html.escape(program_title)}</div>
-                <pre><code>{html.escape(code)}</code></pre>
-            </section>
-            <section class="output-section">
+                <div class="code-container">
+                    <pre><code>{html.escape(code)}</code></pre>
+                </div>
+            </div>
+
+            <div class="page-break"></div>
+            
+            <div class="page-container">
                 <h2>Program Output</h2>
-                {reconstruct_terminal_view(context)}
-            </section>
+                <div class="terminal-view">
+                    {reconstruct_terminal_view(context)}
+                </div>
+            </div>
         </body>
         </html>
         """
@@ -632,7 +629,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with more aggressive options to control page breaks
+        # Generate PDF with improved options for proper page filling and breaks
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
@@ -641,14 +638,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             "--margin-left", "15mm",
             "--margin-right", "15mm",
             "--page-size", "A4",
-            "--print-media-type",  # Apply print media CSS rules
-            "--disable-external-links",  # Faster rendering
-            "--disable-internal-links",  # Faster rendering
             "--no-background",  # Better for print quality
-            "--disable-javascript",  # Prevents any script-based modifications
-            "--load-error-handling", "ignore",  # Continue on errors
-            "--load-media-error-handling", "ignore",  # Continue on media errors
-            "--zoom", "1.0",  # Control scaling
+            "--print-media-type",  # Apply print media CSS rules
             "output.html", 
             pdf_filename
         ])
@@ -668,42 +659,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await cleanup(context)
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with standardized tabs for C programs"""
-    terminal_log = context.user_data.get('terminal_log', [])
-    
-    if terminal_log:
-        raw_output = ''.join(terminal_log)
-        # Use standard C tab width (4 spaces per tab)
-        raw_output = raw_output.expandtabs(4) 
-        
-        # Check if the output contains a table structure and format it accordingly
-        if "PID" in raw_output and "Burst Time" in raw_output and "Turnaround Time" in raw_output:
-            # Try to parse and format the table for better PDF display
-            try:
-                # Extract table data (simplified approach)
-                table_html = format_table_from_output(raw_output)
-                return f"""
-                <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-                <div class="terminal-output">{html.escape(raw_output)}</div>
-                """
-            except:
-                # Fallback to regular output
-                pass
-                
-        return f"""
-        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-        <div class="terminal-output">{html.escape(raw_output)}</div>
-        """
-    
-    return "<pre>No terminal output available</pre>"
-    
-
-def format_table_from_output(raw_output):
-    """Helper function to format terminal table outputs for better PDF display"""
-    # This is a placeholder - you would implement logic to detect and format tables
-    # For now, we're just returning the raw output
-    return raw_output
-    
     """Preserve exact terminal formatting with standardized tabs for C programs"""
     terminal_log = context.user_data.get('terminal_log', [])
     
@@ -803,3 +758,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
