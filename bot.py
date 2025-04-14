@@ -455,26 +455,47 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs"""
+    """Preserve exact terminal formatting with tabs and format tables properly"""
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
         raw_output = ''.join(terminal_log)
         # Double tab width for better PDF readability while maintaining alignment
         raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
-        return f"""
-         <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
-        <div style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 16px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-        ">{html.escape(raw_output)}</div>
-        """
+        
+        # Convert raw output to HTML with table styling if it contains table-like data
+        if "PID" in raw_output and "Turnaround Time" in raw_output and "Waiting Time" in raw_output:
+            table_lines = raw_output.splitlines()
+            table_html = "<table border='1' style='border-collapse: collapse; width: 100%; margin-top: 10px; font-family: Courier New, monospace;'>"
+            in_table = False
+            for line in table_lines:
+                if "PID" in line:
+                    table_html += "<tr><th>" + "</th><th>".join(line.split()) + "</th></tr>"
+                    in_table = True
+                elif in_table and any(num in line for num in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
+                    table_html += "<tr><td>" + "</td><td>".join(line.split()) + "</td></tr>"
+                else:
+                    table_html = "<div style='font-family: Courier New, monospace; white-space: pre; font-size: 16px; line-height: 1.2; background: #FFFFFF; padding: 10px; border-radius: 3px; overflow-x: auto;'>" + html.escape(raw_output) + "</div>"
+                    break
+            table_html += "</table>" if in_table else ""
+            return f"""
+            <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
+            {table_html}
+            """
+        else:
+            return f"""
+            <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
+            <div style="
+                font-family: 'Courier New', monospace;
+                white-space: pre;
+                font-size: 16px;
+                line-height: 1.2;
+                background: #FFFFFF;
+                padding: 10px;
+                border-radius: 3px;
+                overflow-x: auto;
+            ">{html.escape(raw_output)}</div>
+            """
     
     return "<pre>No terminal output available</pre>"
     
