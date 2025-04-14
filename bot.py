@@ -370,19 +370,22 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab alignment styling
+        # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                body {{ 
+                    font-family: Arial, sans-serif; 
+                    margin: 20px; 
+                }}
                 .program-title {{
                     font-size: 30px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
                     text-decoration: underline;
-                    border-bottom: 3px
+                    border-bottom: 3px solid #000;
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
@@ -399,12 +402,26 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .terminal-view {{
                     margin: 10px 0;
                 }}
+                .code-section {{
+                    min-height: 90vh; /* Ensure code section tries to fill most of the first page */
+                    overflow: visible;
+                }}
+                .terminal-section {{
+                    page-break-before: always; /* Force terminal output to start on a new page if code fills first page */
+                }}
+                @media print {{
+                    .code-section {{
+                        break-inside: avoid; /* Prevent code from breaking across pages if possible */
+                    }}
+                }}
             </style>
         </head>
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
-            <pre><code>{html.escape(code)}</code></pre>
-            <div class="terminal-view">
+            <div class="code-section">
+                <pre><code>{html.escape(code)}</code></pre>
+            </div>
+            <div class="terminal-section">
                 {reconstruct_terminal_view(context)}
             </div>
         </body>
@@ -415,13 +432,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             file.write(html_content)
 
         # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
         # Generate PDF
-        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
+        subprocess.run(["wkhtmltopdf", "--page-size", "A4", "output.html", pdf_filename])
 
         # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
