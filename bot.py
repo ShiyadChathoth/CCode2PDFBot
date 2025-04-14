@@ -370,7 +370,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab alignment styling and page break control
+        # Pad code with newlines if short to ensure first page fill
+        code_lines = code.split('\n')
+        if len(code_lines) < 50:  # Arbitrary threshold for a "short" code
+            code += '\n' * (50 - len(code_lines))
+
         html_content = f"""
         <html>
         <head>
@@ -399,19 +403,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 10px;
                     border-radius: 3px;
                 }}
-                .terminal-view {{
-                    margin: 10px 0;
-                }}
                 .code-section {{
-                    min-height: 90vh; /* Ensure code section tries to fill most of the first page */
-                    overflow: visible;
+                    min-height: 100vh; /* Force full page height */
+                    break-inside: avoid; /* Prevent code from breaking across pages */
                 }}
                 .terminal-section {{
-                    page-break-before: always; /* Force terminal output to start on a new page if code fills first page */
+                    page-break-before: always; /* Ensure terminal starts on new page */
                 }}
                 @media print {{
                     .code-section {{
-                        break-inside: avoid; /* Prevent code from breaking across pages if possible */
+                        break-inside: avoid;
                     }}
                 }}
             </style>
@@ -431,15 +432,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
-        # Generate sanitized filename from title
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF
         subprocess.run(["wkhtmltopdf", "--page-size", "A4", "output.html", pdf_filename])
 
-        # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
@@ -452,7 +450,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
-
 
 def reconstruct_terminal_view(context):
     """Preserve exact terminal formatting with tabs and format tables properly"""
