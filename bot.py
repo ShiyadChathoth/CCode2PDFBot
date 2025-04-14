@@ -546,7 +546,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <head>
             <style>
                 body {{ 
-                    font-family: Arial, sans-serif; 
+                    font-family: Arial, sans-serif;
                     margin: 20px;
                     padding: 0;
                 }}
