@@ -370,10 +370,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Pad code with newlines if short to ensure first page fill
+        # Pad code with newlines if short to ensure visibility
         code_lines = code.split('\n')
-        if len(code_lines) < 50:  # Arbitrary threshold for a "short" code
-            code += '\n' * (50 - len(code_lines))
+        if len(code_lines) < 10:  # Minimum visible lines
+            code += '\n' * (10 - len(code_lines))
 
         html_content = f"""
         <html>
@@ -404,11 +404,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-radius: 3px;
                 }}
                 .code-section {{
-                    min-height: 100vh; /* Force full page height */
-                    break-inside: avoid; /* Prevent code from breaking across pages */
+                    min-height: 10em; /* Minimum height for visibility */
+                    break-inside: avoid;
                 }}
                 .terminal-section {{
-                    page-break-before: always; /* Ensure terminal starts on new page */
+                    page-break-before: always; /* Force new page for terminal output */
                 }}
                 @media print {{
                     .code-section {{
@@ -450,7 +450,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
-
+        
 def reconstruct_terminal_view(context):
     """Preserve exact terminal formatting with tabs and format tables properly"""
     terminal_log = context.user_data.get('terminal_log', [])
