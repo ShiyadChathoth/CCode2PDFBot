@@ -532,7 +532,6 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     return ConversationHandler.END
 
 # Only showing the parts that need to be modified - replace these functions in the original code
-
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
@@ -540,16 +539,17 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab spacing for C code and improved page filling
+        # Generate HTML with robust page filling
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ 
+                body {{
                     font-family: Arial, sans-serif;
-                    margin: 20px;
+                    margin: 0; /* Reset body margins for full control */
                     padding: 0;
                 }}
+
                 .program-title {{
                     font-size: 30px;
                     font-weight: bold;
@@ -560,45 +560,54 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     border-bottom: 3px solid black;
                     padding-bottom: 10px;
                 }}
+
+                .page-container {{
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 100vh !important; /* Force full page height */
+                    height: auto !important; /* Allow content to expand */
+                    box-sizing: border-box; /* Include padding in height */
+                    padding: 20px; /* Add padding within the page */
+                    page-break-inside: avoid;
+                }}
+
+                .code-container {{
+                    flex-grow: 1;
+                    overflow: auto;
+                }}
+
                 pre {{
                     font-family: 'Courier New', monospace;
                     white-space: pre;
-                    font-size: 18px;
-                    line-height: 1.3;
-                    tab-size: 4; /* Standard tab size for C code */
-                    -moz-tab-size: 4;
-                    -o-tab-size: 4;
-                    background: #FFFFFF;
-                    padding: 5px;
-                    border-radius: 3px;
+                    font-size: 16px;
+                    line-height: 1.2;
+                    tab-size: 4;
+                    background-color: #f0f0f0;
+                    padding: 10px;
+                    border-radius: 5px;
                     overflow-x: auto;
                 }}
+
                 .terminal-view {{
-                    margin: 10px 0;
-                }}
-                /* Improved page break control styles */
-                .page-container {{
-                    page-break-inside: avoid;
-                    min-height: 95vh; /* Fill page more completely */
-                    display: flex;
-                    flex-direction: column;
-                }}
-                .code-container {{
-                    flex-grow: 1; /* Allow code section to grow and fill available space */
+                    flex-grow: 1;
                     overflow: auto;
+                    margin-top: 20px;
                 }}
+
                 .page-break {{
                     page-break-before: always;
                     height: 1px;
                     width: 100%;
                 }}
-                @media print {{
-                    .page-container {{
-                        height: 100vh;
-                        page-break-after: always;
-                        overflow: hidden;
-                    }}
-                }}
+
+                /* Ensure footer stays at the bottom */
+                /*footer {{
+                    margin-top: auto;
+                    text-align: center;
+                    padding-top: 10px;
+                    border-top: 1px solid #ccc;
+                }}*/
+
             </style>
         </head>
         <body>
@@ -610,13 +619,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             </div>
 
             <div class="page-break"></div>
-            
+
             <div class="page-container">
                 <h2>Program Output</h2>
                 <div class="terminal-view">
                     {reconstruct_terminal_view(context)}
                 </div>
-            </div>
+                </div>
         </body>
         </html>
         """
@@ -628,19 +637,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
-        
-        # Generate PDF with improved options for proper page filling and breaks
+
+        # Generate PDF with improved options
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
-            "--margin-top", "15mm",
-            "--margin-bottom", "15mm",
-            "--margin-left", "15mm",
-            "--margin-right", "15mm",
+            "--margin-top", "10mm",
+            "--margin-bottom", "10mm",
+            "--margin-left", "10mm",
+            "--margin-right", "10mm",
             "--page-size", "A4",
-            "--no-background",  # Better for print quality
-            "--print-media-type",  # Apply print media CSS rules
-            "output.html", 
+            "--no-background",
+            "--print-media-type",
+            "output.html",
             pdf_filename
         ])
 
@@ -655,38 +664,35 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
     except Exception as e:
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
+        logger.error(f"PDF generation error: {e}", exc_info=True)  # Log with traceback
     finally:
         await cleanup(context)
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with standardized tabs for C programs"""
+    """Preserve terminal formatting with standardized tabs."""
+
     terminal_log = context.user_data.get('terminal_log', [])
-    
+
     if terminal_log:
         raw_output = ''.join(terminal_log)
-        # Use standard C tab width (4 spaces per tab)
-        raw_output = raw_output.expandtabs(4) 
+        raw_output = raw_output.expandtabs(4)  # Standard C tab width
         return f"""
-        <h1 style="font-size: 25px;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
-        <div style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-            tab-size: 4; /* Standard C tab size */
-            -moz-tab-size: 4;
-            -o-tab-size: 4;
-            flex-grow: 1; /* Fill available space */
-            min-height: 80vh; /* Minimum height to fill most of page */
-        ">{html.escape(raw_output)}</div>
-        """
-    
-    return "<pre>No terminal output available</pre>"
+            <h1 style="font-size: 25px; text-align: center;"><u style="text-decoration-thickness: 5px;"><strong>OUTPUT</strong></u></h1>
+            <div style="
+                font-family: 'Courier New', monospace;
+                white-space: pre-wrap; /* Important for long lines */
+                font-size: 16px;
+                line-height: 1.2;
+                background-color: #ffffff;
+                padding: 10px;
+                border-radius: 5px;
+                overflow-x: auto;
+                tab-size: 4;
+                word-wrap: break-word; /* Break long words */
+            ">{html.escape(raw_output)}</div>
+            """
 
+    return "<pre>No terminal output available</pre>"
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
     if not system_messages:
