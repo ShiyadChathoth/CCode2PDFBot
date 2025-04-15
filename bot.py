@@ -469,7 +469,7 @@ def reconstruct_terminal_view(context):
                 elif in_table and any(num in line for num in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
                     table_html += "<tr><td>" + "</td><td>".join(line.split()) + "</td></tr>"
                 else:
-                    table_html = "<div style='font-family: Courier New, monospace; white-space: pre; font-size: 16px; line-height: 1.2; background: #FFFFFF; padding: 10px; border-radius: 3px; overflow-x: auto;'>" + html.escape(raw_output) + "</div>"
+                    table_html = "<div style='font-family: Courier New, monospace; font-size: 16px; line-height: 1.2; background: #FFFFFF; padding: 10px; border-radius: 3px; overflow-x: auto;'>" + html.escape(raw_output) + "</div>"
                     break
             table_html += "</table>" if in_table else ""
             return f"""
@@ -481,7 +481,6 @@ def reconstruct_terminal_view(context):
             <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
             <div style="
                 font-family: 'Courier New', monospace;
-                white-space: pre;
                 font-size: 16px;
                 line-height: 1.2;
                 background: #FFFFFF;
