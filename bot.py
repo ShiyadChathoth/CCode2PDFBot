@@ -407,9 +407,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     min-height: 10em; /* Minimum height for visibility */
                     break-inside: avoid;
                 }}
-                .terminal-section {{
-                    page-break-before: always; /* Force new page for terminal output */
-                }}
                 @media print {{
                     .code-section {{
                         break-inside: avoid;
