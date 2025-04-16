@@ -456,6 +456,8 @@ def reconstruct_terminal_view(context):
         raw_output = ''.join(terminal_log)
         # Double tab width for better PDF readability while maintaining alignment
         raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+
+        raw_output = re.sub(r'^\s+', '', raw_output);
         
         # Convert raw output to HTML with table styling if it contains table-like data
         if "PID" in raw_output and "Turnaround Time" in raw_output and "Waiting Time" in raw_output:
@@ -469,7 +471,7 @@ def reconstruct_terminal_view(context):
                 elif in_table and any(num in line for num in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
                     table_html += "<tr><td>" + "</td><td>".join(line.split()) + "</td></tr>"
                 else:
-                    table_html = "<div style='font-family: Courier New, monospace; font-size: 16px; line-height: 1.2; background: #FFFFFF; padding: 10px; border-radius: 3px; overflow-x: auto;'>" + html.escape(raw_output) + "</div>"
+                    table_html = "<div style='font-family: Courier New, monospace; font-size: 16px; line-height: 1.2; background: #FFFFFF; padding: 10px; border-radius: 3px; white-space: pre; overflow-x: auto;'>" + html.escape(raw_output) + "</div>"
                     break
             table_html += "</table>" if in_table else ""
             return f"""
@@ -487,6 +489,7 @@ def reconstruct_terminal_view(context):
                 padding: 10px;
                 border-radius: 3px;
                 overflow-x: auto;
+                white-space: pre;
             ">{html.escape(raw_output)}</div>
             """
     
