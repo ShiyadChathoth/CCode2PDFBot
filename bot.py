@@ -1,4 +1,5 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -51,9 +52,6 @@ def clean_whitespace(code):
     return cleaned_code
 
 async def handle_code(update: Update, context: CallbackContext) -> int:
-    # Send /start command before processing code
-    await update.message.reply_text('/start')
-    
     original_code = update.message.text
     code = clean_whitespace(original_code)
     
@@ -531,15 +529,6 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
-    
-    # Add inline keyboard with /start button
-    keyboard = [[InlineKeyboardButton("Start New Session", callback_data='start')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Click the button below to start a new session:",
-        reply_markup=reply_markup
-    )
-    
     return ConversationHandler.END
 
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
@@ -602,7 +591,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     text-decoration-thickness: 5px;
                     font-weight: bold;
                     margin-top: 20px;
-                    page-break-before: avoid;
+                    page-break-after: avoid;
                 }}
                 .output-content {{
                     page-break-before: avoid;
@@ -660,7 +649,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Render terminal output with tabs replaced8 by fixed spaces for PDF compatibility."""
+    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
     terminal_log = context.user_data.get('terminal_log', [])
 
     if terminal_log:
@@ -687,6 +676,10 @@ def reconstruct_terminal_view(context):
         """
 
     return "<pre>No terminal output available</pre>"
+
+
+
+
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
@@ -731,13 +724,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     await cleanup(context)
     return ConversationHandler.END
 
-async def button_callback(update: Update, context: CallbackContext) -> None:
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'start':
-        await start(update, context)
-
 def main() -> None:
     try:
         application = Application.builder().token(TOKEN).build()
@@ -753,7 +739,6 @@ def main() -> None:
         )
         
         application.add_handler(conv_handler)
-        application.add_handler(CallbackQueryHandler(button_callback))
         
         logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
