@@ -648,14 +648,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
+    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility.
+    Only add newline if the original line contains any code (non-empty).
+    """
     terminal_log = context.user_data.get('terminal_log', [])
 
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
             line_with_spaces = line.replace('\t', '        ')  # 8 spaces
-            raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
+            if line_with_spaces.strip():
+                raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
+            else:
+                raw_output += '\n'
 
         return f"""
         <div class="terminal-view" style="page-break-inside: avoid;">
@@ -675,6 +680,7 @@ def reconstruct_terminal_view(context):
         """
 
     return "<pre>No terminal output available</pre>"
+
 
 
 def generate_system_messages_html(system_messages):
