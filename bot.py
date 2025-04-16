@@ -603,23 +603,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 <div class="code-section">
                     <pre><code>{html.escape(code)}</code></pre>
                 </div>
-            <div class="terminal-view" style="page-break-inside: avoid;">
-    <div class="output-section">
-        <h1 class="output-title">OUTPUT</h1>
-        <div class="output-content" style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-            page-break-inside: avoid;
-        ">{html.escape(raw_output)}</div>
-    </div>
-</div>
-
+                <div class="terminal-view">
+                    {reconstruct_terminal_view(context)}
+                </div>
             </div>
         </body>
         </html>
@@ -674,9 +660,8 @@ def reconstruct_terminal_view(context):
                 raw_output += line
   # 12 spaces per tab
         return f"""
-    
-        <div <h1 class="output-title">OUTPUT</h1>
-            class="output-content" style="
+        <h1 class="output-title">OUTPUT</h1>
+        <div class="output-content" style="
             font-family: 'Courier New', monospace;
             white-space: pre;
             font-size: 18px;
