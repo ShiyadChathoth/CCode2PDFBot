@@ -649,22 +649,18 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 def reconstruct_terminal_view(context):
     terminal_log = context.user_data.get('terminal_log', [])
+
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            parts = line.strip().split('\t')
-            # Only format as table if more than 1 part
-            if len(parts) > 1:
-                formatted_line = ''.join(f"{p:<20}" for p in parts)
-                raw_output += formatted_line + '\n'
-            else:
-                raw_output += line
+            raw_output += line if line.endswith('\n') else line + '\n'
+
         return f"""
         <div class="terminal-view" style="page-break-inside: avoid;">
             <h1 class="output-title">OUTPUT</h1>
             <div class="output-content" style="
                 font-family: 'Courier New', monospace;
-                white-space: pre;
+                white-space: pre-wrap;
                 font-size: 18px;
                 line-height: 1.2;
                 background: #FFFFFF;
@@ -672,10 +668,15 @@ def reconstruct_terminal_view(context):
                 border-radius: 3px;
                 overflow-x: auto;
                 page-break-inside: avoid;
+                tab-size: 8;
+                -moz-tab-size: 8;
+                -o-tab-size: 8;
             ">{html.escape(raw_output)}</div>
         </div>
         """
+
     return "<pre>No terminal output available</pre>"
+
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
