@@ -650,9 +650,15 @@ def reconstruct_terminal_view(context):
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
-        raw_output = ''.join(terminal_log)
-        # Double tab width for better PDF readability while maintaining alignment
-        raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
+        raw_output = ''
+        for line in terminal_log:
+            if '\t' in line:
+                parts = line.split('\t')
+                formatted_line = ''.join(f"{p:<15}" for p in parts)
+                raw_output += formatted_line + '\n'
+            else:
+                raw_output += line
+  # 12 spaces per tab
         return f"""
         <h1 class="output-title">OUTPUT</h1>
         <div class="output-content" style="
