@@ -723,15 +723,15 @@ async def cleanup(context: CallbackContext):
 async def start(update: Update, context: CallbackContext) -> int:
     keyboard = [['/start', '/cancel']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-    
+
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and run it.',
+        "Hi! Send me your C code, and I will compile and run it.\n\nYou can use /cancel anytime to stop.",
         reply_markup=reply_markup
     )
     return CODE
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Operation cancelled.")
+    await update.message.reply_text("Operation cancelled. You can use /start to begin again.")
     return ConversationHandler.END
 
 def main() -> None:
