@@ -603,22 +603,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 <div class="code-section">
                     <pre><code>{html.escape(code)}</code></pre>
                 </div>
-              <div class="terminal-view" style="page-break-inside: avoid;">
-    <div class="output-section">
-        <h1 class="output-title">OUTPUT</h1>
-        <div class="output-content" style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-            page-break-inside: avoid;
-        ">{html.escape(raw_output)}</div>
-    </div>
+<div class="terminal-view">
+    {reconstruct_terminal_view(context)}
 </div>
+
 
             </div>
         </body>
@@ -660,11 +648,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs"""
+    """Preserve exact terminal formatting with aligned columns and avoid page breaks between header and content."""
     terminal_log = context.user_data.get('terminal_log', [])
-    
+
     if terminal_log:
-        raw_output = ''
+        raw_output = ""
         for line in terminal_log:
             if '\t' in line:
                 parts = line.split('\t')
@@ -672,21 +660,23 @@ def reconstruct_terminal_view(context):
                 raw_output += formatted_line + '\n'
             else:
                 raw_output += line
-  # 12 spaces per tab
+
         return f"""
-        <h1 class="output-title">OUTPUT</h1>
-        <div class="output-content" style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-        ">{html.escape(raw_output)}</div>
+        <div class="terminal-view" style="page-break-inside: avoid;">
+            <h1 class="output-title">OUTPUT</h1>
+            <div class="output-content" style="
+                font-family: 'Courier New', monospace;
+                white-space: pre;
+                font-size: 18px;
+                line-height: 1.2;
+                background: #FFFFFF;
+                padding: 10px;
+                border-radius: 3px;
+                overflow-x: auto;
+                page-break-inside: avoid;
+            ">{html.escape(raw_output)}</div>
+        </div>
         """
-    
     return "<pre>No terminal output available</pre>"
 
 def generate_system_messages_html(system_messages):
