@@ -403,7 +403,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 10px;
                     border-radius: 3px;
                 }}
-                .code-section {{
+                .code-section, terminal-section {{
                     min-height: 10em; /* Minimum height for visibility */
                     break-inside: avoid;
                 }}
@@ -417,10 +417,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
             <div class="code-section">
-                {code}
+                <pre><code>{code}</code></pre>
             </div>
             <div class="terminal-section">
-                {reconstruct_terminal_view(context)}
+                <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
+                <pre><code>{reconstruct_terminal_view(context)}</code></pre>
             </div>
         </body>
         </html>
@@ -479,19 +480,7 @@ def reconstruct_terminal_view(context):
             {table_html}
             """
         else:
-            return f"""
-            <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
-            <div style="
-                font-family: 'Courier New', monospace;
-                font-size: 16px;
-                line-height: 1.2;
-                background: #FFFFFF;
-                padding: 10px;
-                border-radius: 3px;
-                overflow-x: auto;
-                white-space: pre;
-            ">{html.escape(raw_output)}</div>
-            """
+            return raw_output
     
     return "<pre>No terminal output available</pre>"
     
