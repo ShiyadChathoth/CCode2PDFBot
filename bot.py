@@ -38,7 +38,7 @@ CODE, RUNNING, TITLE_INPUT = range(3)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
+        'Hi! Send me your C code, and I will format, compile, and execute it step-by-step.'
     )
     return CODE
 
@@ -50,6 +50,34 @@ def clean_whitespace(code):
             cleaned_code = cleaned_code.replace(char, ' ')
     return cleaned_code
 
+def format_c_code(code):
+    """Format C code using clang-format."""
+    try:
+        # Write the code to a temporary file for clang-format
+        with open("temp_format.c", "w") as file:
+            file.write(code)
+        
+        # Run clang-format on the file
+        format_result = subprocess.run(
+            ["clang-format", "-style=Google", "temp_format.c"],
+            capture_output=True,
+            text=True
+        )
+        
+        if format_result.returncode == 0:
+            formatted_code = format_result.stdout
+            return formatted_code
+        else:
+            logger.error(f"clang-format error: {format_result.stderr}")
+            return code  # Return original code if formatting fails
+    except Exception as e:
+        logger.error(f"Formatting error: {str(e)}")
+        return code  # Return original code on error
+    finally:
+        # Clean up temporary file
+        if os.path.exists("temp_format.c"):
+            os.remove("temp_format.c")
+
 async def handle_code(update: Update, context: CallbackContext) -> int:
     original_code = update.message.text
     code = clean_whitespace(original_code)
@@ -59,7 +87,14 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             "⚠️ I detected and fixed non-standard whitespace characters in your code that would cause compilation errors."
         )
     
-    context.user_data['code'] = code
+    # Format the cleaned code using clang-format
+    formatted_code = format_c_code(code)
+    if formatted_code != code:
+        await update.message.reply_text(
+            "Your code has been automatically formatted for consistent indentation and style."
+        )
+    
+    context.user_data['code'] = formatted_code
     context.user_data['output'] = []
     context.user_data['inputs'] = []
     context.user_data['errors'] = []
@@ -69,18 +104,18 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
     context.user_data['last_prompt'] = ""
-    context.user_data['pending_messages'] = []  # Track messages that need to be sent
-    context.user_data['output_complete'] = False  # Flag to track when output is complete
+    context.user_data['pending_messages'] = []
+    context.user_data['output_complete'] = False
     
     # Store the printf statements from the code for later analysis
-    printf_patterns = extract_printf_statements(code)
+    printf_patterns = extract_printf_statements(formatted_code)
     context.user_data['printf_patterns'] = printf_patterns
     
     logger.info(f"Extracted printf patterns: {printf_patterns}")
     
     try:
         with open("temp.c", "w") as file:
-            file.write(code)
+            file.write(formatted_code)
         
         compile_result = subprocess.run(["gcc", "temp.c", "-o", "temp"], capture_output=True, text=True)
         
@@ -105,7 +140,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             return RUNNING
         else:
             if "stray" in compile_result.stderr and "\\302" in compile_result.stderr:
-                code = re.sub(r'[^\x00-\x7F]+', ' ', code)
+                code = re.sub(r'[^\x00-\x7F]+', ' ', formatted_code)
                 
                 with open("temp.c", "w") as file:
                     file.write(code)
@@ -154,23 +189,14 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
 
 def extract_printf_statements(code):
     """Extract potential printf prompt patterns from the code."""
-    # Look for printf statements that might be prompts
     printf_patterns = []
-    
-    # More comprehensive regex to find printf statements with format specifiers
-    # This will match printf("Some text: ") as well as printf("Value %d: ", var)
     pattern = r'printf\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
     printf_matches = re.finditer(pattern, code)
     
     for match in printf_matches:
         prompt_text = match.group(1)
-        # Clean escape sequences
         prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
-        
-        # Replace format specifiers with placeholder
         prompt_text = re.sub(r'%[diouxXfFeEgGaAcspn]', '...', prompt_text)
-        
-        # Only add non-empty prompts
         if prompt_text.strip():
             printf_patterns.append(prompt_text)
     
@@ -187,12 +213,9 @@ async def read_process_output(update: Update, context: CallbackContext):
     output_seen = False
     read_size = 1024
     timeout_counter = 0
-    
-    # Add a flag to track if we're currently sending input
     context.user_data['is_sending_input'] = False
     
     while True:
-        # If we're currently sending input, wait a bit to ensure proper message order
         if context.user_data.get('is_sending_input', False):
             await asyncio.sleep(0.2)
             continue
@@ -203,7 +226,7 @@ async def read_process_output(update: Update, context: CallbackContext):
         done, pending = await asyncio.wait(
             [stdout_task, stderr_task],
             return_when=asyncio.FIRST_COMPLETED,
-            timeout=0.3  # Reduced timeout to check more frequently
+            timeout=0.3
         )
 
         if not done:
@@ -216,11 +239,8 @@ async def read_process_output(update: Update, context: CallbackContext):
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
                 
-                # If this is the first time we're detecting completion, set up finishing sequence
                 if not context.user_data.get('finishing_initiated', False):
                     context.user_data['finishing_initiated'] = True
-                    
-                    # Wait a bit to ensure all output is processed
                     await asyncio.sleep(1.5)
                     
                     execution_log.append({
@@ -230,41 +250,25 @@ async def read_process_output(update: Update, context: CallbackContext):
                     })
                     
                     context.user_data['program_completed'] = True
-                    
-                    # Send the completion message and wait for it to be sent
                     await update.message.reply_text("Program execution completed.")
-                    
-                    # Wait a bit more before asking for title
                     await asyncio.sleep(0.8)
-                    
                     await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                     return TITLE_INPUT
                 else:
-                    # We're already finishing, just wait
                     await asyncio.sleep(0.1)
                     continue
             
-            # If we've seen output and there's been no new output for a while,
-            # check if we might be waiting for input
             timeout_counter += 1
             if output_seen and timeout_counter >= 3 and not context.user_data.get('waiting_for_input', False):
                 if output_buffer:
-                    # Process any remaining output in the buffer
-                    # This is crucial for detecting prompts without newlines
                     new_buffer = process_output_chunk(context, output_buffer, update)
                     output_buffer = new_buffer
                     context.user_data['output_buffer'] = new_buffer
                 
-                # If we're still not waiting for input after processing the buffer,
-                # and there's been no output for a while, assume we're waiting
                 if not context.user_data.get('waiting_for_input', False) and timeout_counter >= 5:
                     context.user_data['waiting_for_input'] = True
-                    
-                    # Get the last detected prompt
                     last_prompt = context.user_data.get('last_prompt', "unknown")
-                    
                     input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
-                    
                     execution_log.append({
                         'type': 'system',
                         'message': input_message,
@@ -274,7 +278,6 @@ async def read_process_output(update: Update, context: CallbackContext):
             
             continue
 
-        # Reset timeout counter when we get output
         timeout_counter = 0
         
         if stdout_task in done:
@@ -282,12 +285,9 @@ async def read_process_output(update: Update, context: CallbackContext):
             if stdout_chunk:
                 decoded_chunk = stdout_chunk.decode()
                 output_seen = True
-                
                 terminal_log.append(decoded_chunk)
-                
                 output_buffer += decoded_chunk
                 context.user_data['output_buffer'] = output_buffer
-                
                 output_buffer = process_output_chunk(context, output_buffer, update)
                 context.user_data['output_buffer'] = output_buffer
 
@@ -295,33 +295,26 @@ async def read_process_output(update: Update, context: CallbackContext):
             stderr_chunk = await stderr_task
             if stderr_chunk:
                 decoded_chunk = stderr_chunk.decode()
-                
                 for line in decoded_chunk.splitlines(True):
                     errors.append(line.strip())
-                    
                     execution_log.append({
                         'type': 'error',
                         'message': line.strip(),
                         'timestamp': datetime.datetime.now(),
                         'raw': line
                     })
-                    
                     await update.message.reply_text(f"Error: {line.strip()}")
 
         for task in pending:
             task.cancel()
 
-        # Check if process has completed
         if process.returncode is not None and not context.user_data.get('finishing_initiated', False):
             if output_buffer:
                 process_output_chunk(context, output_buffer, update)
                 output_buffer = ""
                 context.user_data['output_buffer'] = ""
             
-            # Mark that we've started the finishing sequence
             context.user_data['finishing_initiated'] = True
-            
-            # Add a significant delay to ensure all messages have been sent and processed
             await asyncio.sleep(1.5)
             
             execution_log.append({
@@ -331,13 +324,8 @@ async def read_process_output(update: Update, context: CallbackContext):
             })
             
             context.user_data['program_completed'] = True
-            
-            # Send completion message and wait for it to be sent
             await update.message.reply_text("Program execution completed.")
-            
-            # Wait a bit more before asking for title
             await asyncio.sleep(0.8)
-            
             await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
 
@@ -354,54 +342,41 @@ def process_output_chunk(context, buffer, update):
     output = context.user_data['output']
     printf_patterns = context.user_data.get('printf_patterns', [])
     
-    # First check if the entire buffer might be a prompt without a newline
     if buffer and not buffer.endswith('\n'):
         is_prompt, prompt_text = detect_prompt(buffer, printf_patterns)
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
-            
             log_entry = {
                 'type': 'prompt',
                 'message': buffer,
                 'timestamp': datetime.datetime.now(),
                 'raw': buffer
             }
-            
             execution_log.append(log_entry)
             asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
-            
-            # We've processed the buffer as a prompt, so we can be waiting for input
             context.user_data['waiting_for_input'] = True
             return ""
     
-    # Normal line-by-line processing for output with newlines
     lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
-    
     new_buffer = ""
     if lines and not buffer.endswith('\n'):
         new_buffer = lines[-1]
         lines = lines[:-1]
     
     for line in lines:
-        line_stripped = line.rstrip()  # Use rstrip() to preserve leading whitespace but remove trailing newlines
+        line_stripped = line.rstrip()
         if line_stripped:
             output.append(line_stripped)
-            
-            # Enhanced prompt detection
             is_prompt, prompt_text = detect_prompt(line_stripped, printf_patterns)
-            
             if is_prompt:
                 context.user_data['last_prompt'] = prompt_text
-                
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
                 'message': line_stripped,
                 'timestamp': datetime.datetime.now(),
                 'raw': line
             }
-            
             execution_log.append(log_entry)
-            
             prefix = "Program prompt:" if is_prompt else "Program output:"
             asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
     
@@ -410,49 +385,31 @@ def process_output_chunk(context, buffer, update):
 def detect_prompt(line, printf_patterns):
     """Enhanced detection for printf prompts. Returns (is_prompt, prompt_text)"""
     line_text = line.strip()
-    
-    # First check if the line matches or closely matches any extracted printf patterns
     for pattern in printf_patterns:
-        # Direct match
         if pattern in line_text:
             return True, line_text
-        
-        # Fuzzy match - check if most of the pattern appears in the line
-        # This helps with format specifiers that have been replaced with actual values
         pattern_words = set(re.findall(r'\w+', pattern))
         line_words = set(re.findall(r'\w+', line_text))
         common_words = pattern_words.intersection(line_words)
-        
-        # If we have a significant match and the pattern ends with a prompt character
         if (len(common_words) >= len(pattern_words) * 0.6 or 
             (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>', ' ')))) and len(pattern_words) > 0:
             return True, line_text
     
-    # Input keywords check
     input_keywords = ['enter', 'input', 'type', 'provide', 'give', 'value', 'values']
     line_lower = line_text.lower()
-    
     for keyword in input_keywords:
         if keyword in line_lower:
             return True, line_text
     
-    # Check for ending with prompt characters - added space as a prompt character
     if line_text.rstrip().endswith((':', '?', '>', ' ')):
         return True, line_text
-    
-    # Check for common patterns where a variable name or description is followed by a colon
     if re.search(r'[A-Za-z0-9_]+\s*:', line_text):
         return True, line_text
-    
-    # Check for "Enter XXX: " patterns
     if re.search(r'[Ee]nter\s+[^:]+:', line_text):
         return True, line_text
-    
-    # Additional check for very short outputs that might be prompts
     if len(line_text) < 10 and not line_text.isdigit():
         return True, line_text
     
-    # If none of the above, this is probably not a prompt
     return False, ""
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
@@ -461,7 +418,6 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     execution_log = context.user_data['execution_log']
     terminal_log = context.user_data['terminal_log']
 
-    # If program is already completed, treat this as title input
     if context.user_data.get('program_completed', False):
         return await handle_title_input(update, context)
 
@@ -481,12 +437,8 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.stdin.drain()
         process.stdin.close()
         await process.wait()
-        
-        # Add delay to ensure all output is processed
         await asyncio.sleep(1)
-        
         context.user_data['program_completed'] = True
-        
         await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
         return TITLE_INPUT
     
@@ -497,30 +449,18 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     })
     
     terminal_log.append(user_input + "\n")
-    
-    # Set the flag that we're sending input to prevent output processing during this time
     context.user_data['is_sending_input'] = True
-    
-    # Send the input confirmation message first and await it to ensure order
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
-    
-    # Only after confirmation is sent, send the input to the process
     process.stdin.write((user_input + "\n").encode())
     await process.stdin.drain()
     context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
-    
-    # Add a small delay to ensure message ordering
     await asyncio.sleep(0.2)
-    
-    # Reset the flag
     context.user_data['is_sending_input'] = False
-    
     return RUNNING
 
 async def handle_title_input(update: Update, context: CallbackContext) -> int:
     title = update.message.text
-    
     if title.lower() == 'skip':
         context.user_data['program_title'] = "C Program Execution Report"
     else:
@@ -537,7 +477,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
         <html>
         <head>
@@ -603,11 +542,9 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 <div class="code-section">
                     <pre><code>{html.escape(code)}</code></pre>
                 </div>
-<div class="terminal-view">
-    {reconstruct_terminal_view(context)}
-</div>
-
-
+                <div class="terminal-view">
+                    {reconstruct_terminal_view(context)}
+                </div>
             </div>
         </body>
         </html>
@@ -616,13 +553,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
-        # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Generate PDF with specific options to control page breaks
         subprocess.run([
             "wkhtmltopdf",
             "--enable-smart-shrinking",
@@ -632,7 +566,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             pdf_filename
         ])
 
-        # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
@@ -646,15 +579,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
-
 def reconstruct_terminal_view(context):
     """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
     terminal_log = context.user_data.get('terminal_log', [])
-
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            line_with_spaces = line.replace('\t', '        ')  # 8 spaces
+            line_with_spaces = line.replace('\t', '        ')
             raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
 
         return f"""
@@ -673,12 +604,7 @@ def reconstruct_terminal_view(context):
             ">{html.escape(raw_output)}</div>
         </div>
         """
-
     return "<pre>No terminal output available</pre>"
-
-
-
-
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
@@ -686,7 +612,6 @@ def generate_system_messages_html(system_messages):
         return "<p>No system messages</p>"
     
     html_output = ""
-    
     for msg in system_messages:
         timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
         html_output += f"""
@@ -695,7 +620,6 @@ def generate_system_messages_html(system_messages):
             <p>{msg['message']}</p>
         </div>
         """
-    
     return html_output
 
 async def cleanup(context: CallbackContext):
@@ -708,7 +632,7 @@ async def cleanup(context: CallbackContext):
             process.kill()
             await process.wait()
     
-    for file in ["temp.c", "temp", "output.html"]:
+    for file in ["temp.c", "temp", "output.html", "temp_format.c"]:
         if os.path.exists(file):
             os.remove(file)
     
@@ -726,7 +650,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 def main() -> None:
     try:
         application = Application.builder().token(TOKEN).build()
-        
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
@@ -738,7 +661,6 @@ def main() -> None:
         )
         
         application.add_handler(conv_handler)
-        
         logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
     except telegram.error.Conflict as e:
