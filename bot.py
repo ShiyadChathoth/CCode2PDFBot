@@ -370,26 +370,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "C Program Execution Report")
 
-        # Pad code with newlines if short to ensure visibility
-        code_lines = code.split('\n')
-        if len(code_lines) < 10:  # Minimum visible lines
-            code += '\n' * (10 - len(code_lines))
-
+        # Generate HTML with proper tab alignment styling
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ 
-                    font-family: Arial, sans-serif; 
-                    margin: 20px; 
-                }}
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 .program-title {{
                     font-size: 30px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
                     text-decoration: underline;
-                    border-bottom: 3px solid #000;
+                    border-bottom: 3px
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
@@ -403,25 +396,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 10px;
                     border-radius: 3px;
                 }}
-                .code-section, .terminal-section {{
-                    min-height: 10em; /* Minimum height for visibility */
-                    break-inside: avoid;
-                }}
-                @media print {{
-                    .code-section {{
-                        break-inside: avoid;
-                    }}
+                .terminal-view {{
+                    margin: 10px 0;
                 }}
             </style>
         </head>
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
-            <div class="code-section">
-                <pre><code>{html.escape(code)}</code></pre>
-            </div>
-            <div class="program-title">OUTPUT</div>
-            <div class="terminal-section">
-                <pre><code>{reconstruct_terminal_view(context)}</code></pre>
+            <pre><code>{html.escape(code)}</code></pre>
+            <div class="terminal-view">
+                {reconstruct_terminal_view(context)}
             </div>
         </body>
         </html>
@@ -430,12 +414,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         with open("output.html", "w") as file:
             file.write(html_content)
 
+        # Generate sanitized filename from title
+        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)
+        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        subprocess.run(["wkhtmltopdf", "--page-size", "A4", "output.html", pdf_filename])
+        # Generate PDF
+        subprocess.run(["wkhtmltopdf", "output.html", pdf_filename])
 
+        # Send PDF to user
         with open(pdf_filename, 'rb') as pdf_file:
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
@@ -448,39 +436,29 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
-        
+
+
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with tabs and format tables properly"""
+    """Preserve exact terminal formatting with tabs"""
     terminal_log = context.user_data.get('terminal_log', [])
     
     if terminal_log:
         raw_output = ''.join(terminal_log)
         # Double tab width for better PDF readability while maintaining alignment
         raw_output = raw_output.expandtabs(12)  # 12 spaces per tab
-
-        raw_output = re.sub(r'^\s+', '', raw_output);
-        
-        # Convert raw output to HTML with table styling if it contains table-like data
-        if "PID" in raw_output and "Turnaround Time" in raw_output and "Waiting Time" in raw_output:
-            table_lines = raw_output.splitlines()
-            table_html = "<table border='1' style='border-collapse: collapse; width: 100%; margin-top: 10px; font-family: Courier New, monospace;'>"
-            in_table = False
-            for line in table_lines:
-                if "PID" in line:
-                    table_html += "<tr><th>" + "</th><th>".join(line.split()) + "</th></tr>"
-                    in_table = True
-                elif in_table and any(num in line for num in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
-                    table_html += "<tr><td>" + "</td><td>".join(line.split()) + "</td></tr>"
-                else:
-                    table_html = "<div style='font-family: Courier New, monospace; font-size: 16px; line-height: 1.2; background: #FFFFFF; padding: 10px; border-radius: 3px; white-space: pre; overflow-x: auto;'>" + html.escape(raw_output) + "</div>"
-                    break
-            table_html += "</table>" if in_table else ""
-            return f"""
-            <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
-            {table_html}
-            """
-        else:
-            return raw_output
+        return f"""
+         <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
+        <div style="
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: 16px;
+            line-height: 1.2;
+            background: #FFFFFF;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        ">{html.escape(raw_output)}</div>
+        """
     
     return "<pre>No terminal output available</pre>"
     
