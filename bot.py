@@ -654,8 +654,8 @@ def reconstruct_terminal_view(context):
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            # Normalize all spacing (tabs or spaces)
-            parts = line.strip().split()
+            parts = line.strip().split('\t')
+            # Only format as table if more than 1 part
             if len(parts) > 1:
                 formatted_line = ''.join(f"{p:<20}" for p in parts)
                 raw_output += formatted_line + '\n'
@@ -680,7 +680,6 @@ def reconstruct_terminal_view(context):
         """
 
     return "<pre>No terminal output available</pre>"
-
 
 
 def generate_system_messages_html(system_messages):
