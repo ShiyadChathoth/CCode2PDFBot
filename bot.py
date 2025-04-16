@@ -648,19 +648,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility.
-    Only add newline if the original line contains any code (non-empty).
-    """
+    """Render terminal output preserving exact tab characters as in terminal."""
     terminal_log = context.user_data.get('terminal_log', [])
 
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            line_with_spaces = line.replace('\t', '        ')  # 8 spaces
-            if line_with_spaces.strip():
-                raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
-            else:
-                raw_output += '\n'
+            # Preserve exact terminal formatting including tabs
+            raw_output += line if line.endswith('\n') else line + '\n'
 
         return f"""
         <div class="terminal-view" style="page-break-inside: avoid;">
@@ -675,11 +670,15 @@ def reconstruct_terminal_view(context):
                 border-radius: 3px;
                 overflow-x: auto;
                 page-break-inside: avoid;
+                tab-size: 8;
+                -moz-tab-size: 8;
+                -o-tab-size: 8;
             ">{html.escape(raw_output)}</div>
         </div>
         """
 
     return "<pre>No terminal output available</pre>"
+
 
 
 
