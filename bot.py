@@ -648,18 +648,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with aligned columns and avoid page breaks between header and content."""
+    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
     terminal_log = context.user_data.get('terminal_log', [])
 
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            if '\t' in line:
-                parts = line.split('\t')
-                formatted_line = ''.join(f"{p:<15}" for p in parts)
-                raw_output += formatted_line + '\n'
-            else:
-                raw_output += line
+            line_with_spaces = line.replace('\t', '        ')  # 8 spaces
+            raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
 
         return f"""
         <div class="terminal-view" style="page-break-inside: avoid;">
@@ -677,7 +673,9 @@ def reconstruct_terminal_view(context):
             ">{html.escape(raw_output)}</div>
         </div>
         """
+
     return "<pre>No terminal output available</pre>"
+
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
