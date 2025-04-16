@@ -646,15 +646,21 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
+
 def reconstruct_terminal_view(context):
-    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
+    """Preserve exact terminal formatting with aligned columns and avoid page breaks between header and content."""
     terminal_log = context.user_data.get('terminal_log', [])
 
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            line_with_spaces = line.replace('\t', '        ')  # 8 spaces
-            raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
+            # Normalize all spacing (tabs or spaces)
+            parts = line.strip().split()
+            if len(parts) > 1:
+                formatted_line = ''.join(f"{p:<20}" for p in parts)
+                raw_output += formatted_line + '\n'
+            else:
+                raw_output += line
 
         return f"""
         <div class="terminal-view" style="page-break-inside: avoid;">
