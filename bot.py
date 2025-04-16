@@ -660,8 +660,9 @@ def reconstruct_terminal_view(context):
                 raw_output += line
   # 12 spaces per tab
         return f"""
-        <h1 class="output-title">OUTPUT</h1>
-        <div class="output-content" style="
+    
+        <div <h1 class="output-title">OUTPUT</h1>
+            class="output-content" style="
             font-family: 'Courier New', monospace;
             white-space: pre;
             font-size: 18px;
