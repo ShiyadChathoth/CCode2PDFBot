@@ -1,4 +1,5 @@
 
+from telegram import ReplyKeyboardMarkup
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -719,9 +720,18 @@ async def cleanup(context: CallbackContext):
     
     context.user_data.clear()
 
+async def start(update: Update, context: CallbackContext) -> int:
+    keyboard = [['/start', '/cancel']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+    
+    await update.message.reply_text(
+        'Hi! Send me your C code, and I will compile and run it.',
+        reply_markup=reply_markup
+    )
+    return CODE
+
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled.")
-    await cleanup(context)
     return ConversationHandler.END
 
 def main() -> None:
@@ -739,6 +749,7 @@ def main() -> None:
         )
         
         application.add_handler(conv_handler)
+        application.add_handler(CommandHandler('cancel', cancel))
         
         logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
@@ -749,6 +760,7 @@ def main() -> None:
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         raise
+
 
 if __name__ == '__main__':
     main()
