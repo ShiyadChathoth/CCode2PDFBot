@@ -646,6 +646,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
+
 def reconstruct_terminal_view(context):
     """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
     terminal_log = context.user_data.get('terminal_log', [])
@@ -674,7 +675,6 @@ def reconstruct_terminal_view(context):
         """
 
     return "<pre>No terminal output available</pre>"
-
 
 
 def generate_system_messages_html(system_messages):
