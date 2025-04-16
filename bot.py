@@ -654,10 +654,9 @@ def reconstruct_terminal_view(context):
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
-            # Normalize all spacing (tabs or spaces)
-            parts = line.strip().split()
-            if len(parts) > 1:
-                formatted_line = ''.join(f"{p:<20}" for p in parts)
+            if '\t' in line:
+                parts = line.split('\t')
+                formatted_line = ''.join(f"{p:<15}" for p in parts)
                 raw_output += formatted_line + '\n'
             else:
                 raw_output += line
@@ -678,10 +677,7 @@ def reconstruct_terminal_view(context):
             ">{html.escape(raw_output)}</div>
         </div>
         """
-
     return "<pre>No terminal output available</pre>"
-
-
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
