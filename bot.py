@@ -659,6 +659,7 @@ def reconstruct_terminal_view(context):
             else:
                 raw_output += line
   # 12 spaces per tab
+# Wrap the heading and output in a single container to prevent page breaks between them
 return f"""
 <div class="output-wrapper" style="page-break-inside: avoid; margin-top: 30px;">
     <!-- Output heading -->
