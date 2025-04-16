@@ -659,24 +659,19 @@ def reconstruct_terminal_view(context):
             else:
                 raw_output += line
   # 12 spaces per tab
-# Wrap the heading and output in a single container to prevent page breaks between them
-return f"""
-<div class="output-wrapper" style="page-break-inside: avoid; margin-top: 30px;">
-    <!-- Output heading -->
-    <h1 class="output-title">OUTPUT</h1>
+        return f"""
     
-    <!-- Terminal output content with preserved formatting -->
-    <div class="output-content" style="
-        font-family: 'Courier New', monospace;
-        white-space: pre;
-        font-size: 18px;
-        line-height: 1.2;
-        background: #FFFFFF;
-        padding: 10px;
-        border-radius: 3px;
-        overflow-x: auto;
-    ">{html.escape(raw_output)}</div>
-</div>
+        <div <h1 class="output-title">OUTPUT</h1>
+            class="output-content" style="
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: 18px;
+            line-height: 1.2;
+            background: #FFFFFF;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        ">{html.escape(raw_output)}</div>
         """
     
     return "<pre>No terminal output available</pre>"
