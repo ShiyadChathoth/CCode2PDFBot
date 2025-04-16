@@ -417,7 +417,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <body>
             <div class="program-title">{html.escape(program_title)}</div>
             <div class="code-section">
-                <pre><code>{html.escape(code)}</code></pre>
+                {code}
             </div>
             <div class="terminal-section">
                 {reconstruct_terminal_view(context)}
