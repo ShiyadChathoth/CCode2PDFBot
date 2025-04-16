@@ -403,7 +403,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 10px;
                     border-radius: 3px;
                 }}
-                .code-section, terminal-section {{
+                .code-section, .terminal-section {{
                     min-height: 10em; /* Minimum height for visibility */
                     break-inside: avoid;
                 }}
@@ -419,8 +419,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             <div class="code-section">
                 <pre><code>{code}</code></pre>
             </div>
+            <div class="program-title">OUTPUT</div>
             <div class="terminal-section">
-                <h1><u style="text-decoration-thickness: 3px;"><strong>OUTPUT</strong></u></h1>
                 <pre><code>{reconstruct_terminal_view(context)}</code></pre>
             </div>
         </body>
