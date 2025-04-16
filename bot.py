@@ -648,9 +648,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
 
 def reconstruct_terminal_view(context):
-    """Preserve exact terminal formatting with aligned columns and avoid page breaks between header and content."""
     terminal_log = context.user_data.get('terminal_log', [])
-
     if terminal_log:
         raw_output = ""
         for line in terminal_log:
@@ -661,7 +659,6 @@ def reconstruct_terminal_view(context):
                 raw_output += formatted_line + '\n'
             else:
                 raw_output += line
-
         return f"""
         <div class="terminal-view" style="page-break-inside: avoid;">
             <h1 class="output-title">OUTPUT</h1>
@@ -678,9 +675,7 @@ def reconstruct_terminal_view(context):
             ">{html.escape(raw_output)}</div>
         </div>
         """
-
     return "<pre>No terminal output available</pre>"
-
 
 def generate_system_messages_html(system_messages):
     """Generate HTML for system messages section."""
