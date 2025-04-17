@@ -109,8 +109,8 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
     
-    # Initialize conversation history for PDF
-    context.user_data['conversation_history'] = []
+    # Initialize terminal simulation for PDF
+    context.user_data['terminal_simulation'] = []
     
     # Initialize activity monitoring
     context.user_data['activity_stats'] = {
@@ -140,6 +140,12 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             'timestamp': datetime.datetime.now()
         })
         
+        # Add to terminal simulation
+        context.user_data['terminal_simulation'].append({
+            'type': 'system',
+            'content': f"Python Syntax Error:\n{syntax_check.stderr}"
+        })
+        
         await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
         return ConversationHandler.END
     
@@ -149,11 +155,10 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         'timestamp': datetime.datetime.now()
     })
     
-    # Add to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'system',
-        'message': 'Python code validation successful! Ready to execute.',
-        'timestamp': datetime.datetime.now()
+    # Add to terminal simulation
+    context.user_data['terminal_simulation'].append({
+        'type': 'system',
+        'content': 'Python code validation successful! Ready to execute.'
     })
     
     # Extract input patterns for later use
@@ -260,6 +265,13 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                             f"⚠️ Your program has been idle for {stats['idle_time']} seconds. "
                             f"It will be terminated soon if no activity is detected."
                         )
+                        
+                        # Add to terminal simulation
+                        context.user_data['terminal_simulation'].append({
+                            'type': 'system',
+                            'content': f"⚠️ Program idle for {stats['idle_time']} seconds. Will terminate soon if no activity."
+                        })
+                        
                         # Give it some more time after the warning
                         stats['idle_time'] = DEFAULT_IDLE_TIMEOUT * 0.7
                     else:
@@ -269,11 +281,10 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                             f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
                         )
                         
-                        # Add to conversation history
-                        context.user_data['conversation_history'].append({
-                            'role': 'system',
-                            'message': f"Program execution terminated after {stats['idle_time']} seconds of inactivity.",
-                            'timestamp': datetime.datetime.now()
+                        # Add to terminal simulation
+                        context.user_data['terminal_simulation'].append({
+                            'type': 'system',
+                            'content': f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
                         })
                         
                         try:
@@ -302,11 +313,10 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                     f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
                 )
                 
-                # Add to conversation history
-                context.user_data['conversation_history'].append({
-                    'role': 'system',
-                    'message': f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds.",
-                    'timestamp': datetime.datetime.now()
+                # Add to terminal simulation
+                context.user_data['terminal_simulation'].append({
+                    'type': 'system',
+                    'content': f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
                 })
                 
                 try:
@@ -375,11 +385,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     
-                    # Add to conversation history
-                    context.user_data['conversation_history'].append({
-                        'role': 'system',
-                        'message': 'Program execution completed.',
-                        'timestamp': datetime.datetime.now()
+                    # Add to terminal simulation
+                    context.user_data['terminal_simulation'].append({
+                        'type': 'system',
+                        'content': 'Program execution completed.'
                     })
                     
                     context.user_data['program_completed'] = True
@@ -465,11 +474,10 @@ async def read_process_output(update: Update, context: CallbackContext):
                             'raw': line
                         })
                         
-                        # Add to conversation history
-                        context.user_data['conversation_history'].append({
-                            'role': 'system',
-                            'message': f"Error: {line.strip()}",
-                            'timestamp': datetime.datetime.now()
+                        # Add to terminal simulation
+                        context.user_data['terminal_simulation'].append({
+                            'type': 'error',
+                            'content': line.strip()
                         })
                         
                         await update.message.reply_text(f"Error: {line.strip()}")
@@ -488,11 +496,10 @@ async def read_process_output(update: Update, context: CallbackContext):
         try:
             await update.message.reply_text(f"Error monitoring program output: {str(e)}")
             
-            # Add to conversation history
-            context.user_data['conversation_history'].append({
-                'role': 'system',
-                'message': f"Error monitoring program output: {str(e)}",
-                'timestamp': datetime.datetime.now()
+            # Add to terminal simulation
+            context.user_data['terminal_simulation'].append({
+                'type': 'system',
+                'content': f"Error monitoring program output: {str(e)}"
             })
             
             # Ask for title only if not already requested
@@ -536,11 +543,10 @@ def process_output_chunk(context, buffer, update):
             
             execution_log.append(log_entry)
             
-            # Add to conversation history
-            context.user_data['conversation_history'].append({
-                'role': 'program',
-                'message': f"Program prompt: {buffer}",
-                'timestamp': datetime.datetime.now()
+            # Add to terminal simulation
+            context.user_data['terminal_simulation'].append({
+                'type': 'prompt',
+                'content': buffer
             })
             
             asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
@@ -584,14 +590,13 @@ def process_output_chunk(context, buffer, update):
             
             execution_log.append(log_entry)
             
-            prefix = "Program prompt:" if is_prompt else "Program output:"
-            
-            # Add to conversation history
-            context.user_data['conversation_history'].append({
-                'role': 'program',
-                'message': f"{prefix} {line_stripped}",
-                'timestamp': datetime.datetime.now()
+            # Add to terminal simulation
+            context.user_data['terminal_simulation'].append({
+                'type': 'prompt' if is_prompt else 'output',
+                'content': line_stripped
             })
+            
+            prefix = "Program prompt:" if is_prompt else "Program output:"
             
             asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
             
@@ -671,11 +676,10 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         
         await update.message.reply_text("Program execution terminated by user.")
         
-        # Add to conversation history
-        context.user_data['conversation_history'].append({
-            'role': 'system',
-            'message': "Program execution terminated by user.",
-            'timestamp': datetime.datetime.now()
+        # Add to terminal simulation
+        context.user_data['terminal_simulation'].append({
+            'type': 'system',
+            'content': "Program execution terminated by user."
         })
         
         context.user_data['program_completed'] = True
@@ -696,22 +700,14 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     # Set the flag that we're sending input to prevent output processing during this time
     context.user_data['is_sending_input'] = True
     
-    # Add to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'user',
-        'message': user_input,
-        'timestamp': datetime.datetime.now()
+    # Add to terminal simulation - this is the user input
+    context.user_data['terminal_simulation'].append({
+        'type': 'input',
+        'content': user_input
     })
     
     # Send the input confirmation message first and await it to ensure order
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
-    
-    # Add input confirmation to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'system',
-        'message': f"Input sent: {user_input}",
-        'timestamp': datetime.datetime.now()
-    })
     
     # Comprehensive fix for input handling that works with multiple inputs in loops
     try:
@@ -758,11 +754,10 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         logger.error(f"Input handling error: {e}")
         await update.message.reply_text(f"Error sending input: {str(e)}")
         
-        # Add to conversation history
-        context.user_data['conversation_history'].append({
-            'role': 'system',
-            'message': f"Error sending input: {str(e)}",
-            'timestamp': datetime.datetime.now()
+        # Add to terminal simulation
+        context.user_data['terminal_simulation'].append({
+            'type': 'error',
+            'content': f"Error sending input: {str(e)}"
         })
         
         # If we encounter a serious error, we might need to restart the process
@@ -789,17 +784,10 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     else:
         context.user_data['program_title'] = title
     
-    # Add to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'user',
-        'message': title,
-        'timestamp': datetime.datetime.now()
-    })
-    
-    context.user_data['conversation_history'].append({
-        'role': 'system',
-        'message': f"Using title: {context.user_data['program_title']}",
-        'timestamp': datetime.datetime.now()
+    # Add to terminal simulation
+    context.user_data['terminal_simulation'].append({
+        'type': 'system',
+        'content': f"Using title: {context.user_data['program_title']}"
     })
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
@@ -809,13 +797,10 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         code = context.user_data['code']
-        execution_log = context.user_data['execution_log']
-        terminal_log = context.user_data['terminal_log']
+        terminal_simulation = context.user_data.get('terminal_simulation', [])
         program_title = context.user_data.get('program_title', "Python Program Execution Report")
-        conversation_history = context.user_data.get('conversation_history', [])
-        inputs = context.user_data.get('inputs', [])
 
-        # Generate HTML with proper tab alignment styling and page break control
+        # Generate HTML with terminal-like styling
         html_content = f"""
         <html>
         <head>
@@ -825,140 +810,67 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     margin: 20mm;
                 }}
                 body {{
-                    font-family: Arial, sans-serif;
+                    font-family: 'Courier New', monospace;
                     margin: 0;
                     padding: 0;
-                }}
-                .page {{
-                    page-break-after: auto;
-                    page-break-inside: avoid;
+                    background-color: #FFFFFF;
                 }}
                 .program-title {{
-                    font-size: 30px;
+                    font-size: 24px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    border-bottom: 3px;
-                }}
-                .language-indicator {{
-                    font-size: 18px;
-                    text-align: center;
-                    margin-bottom: 15px;
-                    color: #555;
-                }}
-                pre {{
-                    font-family: 'Courier New', monospace;
-                    white-space: pre;
-                    font-size: 18px;
-                    line-height: 1.3;
-                    tab-size: 8;
-                    -moz-tab-size: 8;
-                    -o-tab-size: 8;
-                    background: #FFFFFF;
-                    padding: 5px;
-                    border-radius: 3px;
-                    page-break-inside: avoid;
+                    font-family: Arial, sans-serif;
                 }}
                 .code-section {{
-                    page-break-inside: avoid;
                     margin-bottom: 20px;
-                }}
-                .terminal-view {{
-                    margin: 10px 0;
-                }}
-                .output-title {{
-                    font-size: 25px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    font-weight: bold;
-                    margin-top: 20px;
-                    page-break-after: avoid;
-                }}
-                .output-content {{
-                    page-break-before: avoid;
-                }}
-                .conversation-section {{
-                    margin-top: 30px;
-                    page-break-inside: avoid;
-                }}
-                .conversation-title {{
-                    font-size: 25px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    font-weight: bold;
-                    margin-top: 20px;
-                    page-break-after: avoid;
-                }}
-                .message {{
-                    margin: 10px 0;
+                    border: 1px solid #ddd;
                     padding: 10px;
-                    border-radius: 5px;
+                    background-color: #f8f8f8;
+                    white-space: pre;
+                    font-family: 'Courier New', monospace;
+                    font-size: 14px;
+                    line-height: 1.3;
+                    overflow-x: auto;
                 }}
-                .program {{
-                    background-color: #f0f0f0;
-                    border-left: 5px solid #555;
+                .terminal {{
+                    background-color: #FFFFFF;
+                    color: #000000;
+                    padding: 10px;
+                    font-family: 'Courier New', monospace;
+                    font-size: 14px;
+                    line-height: 1.3;
+                    white-space: pre-wrap;
+                    border: 1px solid #ddd;
                 }}
-                .user {{
-                    background-color: #e6f7ff;
-                    border-left: 5px solid #1890ff;
+                .prompt {{
+                    color: #0000FF;
+                }}
+                .input {{
+                    color: #008800;
                     font-weight: bold;
+                }}
+                .output {{
+                    color: #000000;
+                }}
+                .error {{
+                    color: #FF0000;
                 }}
                 .system {{
-                    background-color: #f6ffed;
-                    border-left: 5px solid #52c41a;
+                    color: #888888;
                     font-style: italic;
-                }}
-                .timestamp {{
-                    font-size: 12px;
-                    color: #888;
-                    margin-top: 5px;
-                }}
-                .input-list {{
-                    margin-top: 20px;
-                    page-break-inside: avoid;
-                }}
-                .input-title {{
-                    font-size: 25px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    font-weight: bold;
-                    margin-top: 20px;
-                    page-break-after: avoid;
-                }}
-                .input-item {{
-                    background-color: #e6f7ff;
-                    padding: 10px;
-                    margin: 5px 0;
-                    border-radius: 5px;
-                    font-family: 'Courier New', monospace;
-                    font-weight: bold;
                 }}
             </style>
         </head>
         <body>
-            <div class="page">
-                <div class="program-title">{escape_html(program_title)}</div>
-                <div class="language-indicator">Language: Python</div>
-                <div class="code-section">
-                    <pre><code>{escape_html(code)}</code></pre>
-                </div>
-                
-                <div class="conversation-section">
-                    <h1 class="conversation-title">CONVERSATION HISTORY</h1>
-                    {generate_conversation_html(conversation_history)}
-                </div>
-                
-                <div class="input-list">
-                    <h1 class="input-title">USER INPUTS</h1>
-                    {generate_inputs_html(inputs)}
-                </div>
-                
-                <div class="terminal-view">
-                    <h1 class="output-title">COMPLETE OUTPUT</h1>
-                    {reconstruct_terminal_view(context)}
-                </div>
+            <div class="program-title">{escape_html(program_title)}</div>
+            
+            <h3>Source Code:</h3>
+            <div class="code-section">{escape_html(code)}</div>
+            
+            <h3>Terminal Output:</h3>
+            <div class="terminal">
+                {generate_terminal_html(terminal_simulation)}
             </div>
         </body>
         </html>
@@ -968,7 +880,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             file.write(html_content)
 
         # Generate sanitized filename from title
-        # Replace invalid filename characters with underscores and ensure it ends with .pdf
         sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", str(program_title))
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
@@ -988,7 +899,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             logger.error(f"Error checking/installing wkhtmltopdf: {str(e)}")
             # Continue anyway, it might still work
         
-        # Generate PDF with specific options to control page breaks
+        # Generate PDF
         try:
             pdf_result = subprocess.run([
                 "wkhtmltopdf",
@@ -1016,7 +927,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     chat_id=update.effective_chat.id,
                     document=pdf_file,
                     filename=pdf_filename,
-                    caption=f"Execution report for {program_title}"
+                    caption=f"Terminal output for {program_title}"
                 )
                 if update.message:
                     await update.message.reply_text("You can use /start to run another program or /cancel to end.")
@@ -1035,68 +946,28 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
-def generate_conversation_html(conversation_history):
-    """Generate HTML for the conversation history section"""
-    if not conversation_history:
-        return "<p>No conversation history available</p>"
+def generate_terminal_html(terminal_simulation):
+    """Generate HTML for terminal-like output with inputs and outputs in execution order"""
+    if not terminal_simulation:
+        return "<span class='system'>No terminal output available</span>"
     
     html = ""
-    for entry in conversation_history:
-        role = entry.get('role', 'system')
-        message = entry.get('message', '')
-        timestamp = entry.get('timestamp', datetime.datetime.now())
+    for entry in terminal_simulation:
+        entry_type = entry.get('type', 'output')
+        content = entry.get('content', '')
         
-        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        
-        html += f"""
-        <div class="message {role}">
-            {escape_html(message)}
-            <div class="timestamp">{timestamp_str}</div>
-        </div>
-        """
+        if entry_type == 'prompt':
+            html += f"<span class='prompt'>{escape_html(content)}</span>\n"
+        elif entry_type == 'input':
+            html += f"<span class='input'>{escape_html(content)}</span>\n"
+        elif entry_type == 'output':
+            html += f"<span class='output'>{escape_html(content)}</span>\n"
+        elif entry_type == 'error':
+            html += f"<span class='error'>{escape_html(content)}</span>\n"
+        elif entry_type == 'system':
+            html += f"<span class='system'>{escape_html(content)}</span>\n"
     
     return html
-
-def generate_inputs_html(inputs):
-    """Generate HTML for the user inputs section"""
-    if not inputs:
-        return "<p>No user inputs recorded</p>"
-    
-    html = ""
-    for i, input_value in enumerate(inputs, 1):
-        html += f"""
-        <div class="input-item">
-            Input #{i}: {escape_html(input_value)}
-        </div>
-        """
-    
-    return html
-
-def reconstruct_terminal_view(context):
-    """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
-    terminal_log = context.user_data.get('terminal_log', [])
-
-    if terminal_log:
-        raw_output = ""
-        for line in terminal_log:
-            line_with_spaces = line.replace('\t', '        ')  # 8 spaces
-            raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
-
-        return f"""
-        <div class="output-content" style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-            page-break-inside: avoid;
-        ">{escape_html(raw_output)}</div>
-        """
-
-    return "<pre>No terminal output available</pre>"
 
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
@@ -1126,7 +997,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
