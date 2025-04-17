@@ -102,6 +102,9 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
     
+    # Initialize conversation history for PDF
+    context.user_data['conversation_history'] = []
+    
     # Initialize activity monitoring
     context.user_data['activity_stats'] = {
         'start_time': time.time(),
@@ -136,6 +139,13 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['execution_log'].append({
         'type': 'system',
         'message': 'Python code validation successful!',
+        'timestamp': datetime.datetime.now()
+    })
+    
+    # Add to conversation history
+    context.user_data['conversation_history'].append({
+        'role': 'system',
+        'message': 'Python code validation successful! Ready to execute.',
         'timestamp': datetime.datetime.now()
     })
     
@@ -252,6 +262,13 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                             f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
                         )
                         
+                        # Add to conversation history
+                        context.user_data['conversation_history'].append({
+                            'role': 'system',
+                            'message': f"Program execution terminated after {stats['idle_time']} seconds of inactivity.",
+                            'timestamp': datetime.datetime.now()
+                        })
+                        
                         try:
                             process.terminate()
                             await asyncio.sleep(0.5)
@@ -277,6 +294,13 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                 await update.message.reply_text(
                     f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
                 )
+                
+                # Add to conversation history
+                context.user_data['conversation_history'].append({
+                    'role': 'system',
+                    'message': f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds.",
+                    'timestamp': datetime.datetime.now()
+                })
                 
                 try:
                     process.terminate()
@@ -340,6 +364,13 @@ async def read_process_output(update: Update, context: CallbackContext):
                     
                     execution_log.append({
                         'type': 'system',
+                        'message': 'Program execution completed.',
+                        'timestamp': datetime.datetime.now()
+                    })
+                    
+                    # Add to conversation history
+                    context.user_data['conversation_history'].append({
+                        'role': 'system',
                         'message': 'Program execution completed.',
                         'timestamp': datetime.datetime.now()
                     })
@@ -427,6 +458,13 @@ async def read_process_output(update: Update, context: CallbackContext):
                             'raw': line
                         })
                         
+                        # Add to conversation history
+                        context.user_data['conversation_history'].append({
+                            'role': 'system',
+                            'message': f"Error: {line.strip()}",
+                            'timestamp': datetime.datetime.now()
+                        })
+                        
                         await update.message.reply_text(f"Error: {line.strip()}")
                     
                     # Update activity stats - errors are also a form of output
@@ -442,6 +480,13 @@ async def read_process_output(update: Update, context: CallbackContext):
         logger.error(f"Error in read_process_output: {str(e)}\n{traceback.format_exc()}")
         try:
             await update.message.reply_text(f"Error monitoring program output: {str(e)}")
+            
+            # Add to conversation history
+            context.user_data['conversation_history'].append({
+                'role': 'system',
+                'message': f"Error monitoring program output: {str(e)}",
+                'timestamp': datetime.datetime.now()
+            })
             
             # Ask for title only if not already requested
             if not context.user_data.get('title_requested', False):
@@ -483,6 +528,14 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
+            
+            # Add to conversation history
+            context.user_data['conversation_history'].append({
+                'role': 'program',
+                'message': f"Program prompt: {buffer}",
+                'timestamp': datetime.datetime.now()
+            })
+            
             asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
             
             # We've processed the buffer as a prompt, so we can be waiting for input
@@ -525,6 +578,14 @@ def process_output_chunk(context, buffer, update):
             execution_log.append(log_entry)
             
             prefix = "Program prompt:" if is_prompt else "Program output:"
+            
+            # Add to conversation history
+            context.user_data['conversation_history'].append({
+                'role': 'program',
+                'message': f"{prefix} {line_stripped}",
+                'timestamp': datetime.datetime.now()
+            })
+            
             asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
             
             # Update activity stats
@@ -602,6 +663,14 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
                 logger.error(f"Error terminating process: {e}")
         
         await update.message.reply_text("Program execution terminated by user.")
+        
+        # Add to conversation history
+        context.user_data['conversation_history'].append({
+            'role': 'system',
+            'message': "Program execution terminated by user.",
+            'timestamp': datetime.datetime.now()
+        })
+        
         context.user_data['program_completed'] = True
         
         # Ask for title only if not already requested
@@ -620,8 +689,22 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     # Set the flag that we're sending input to prevent output processing during this time
     context.user_data['is_sending_input'] = True
     
+    # Add to conversation history
+    context.user_data['conversation_history'].append({
+        'role': 'user',
+        'message': user_input,
+        'timestamp': datetime.datetime.now()
+    })
+    
     # Send the input confirmation message first and await it to ensure order
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
+    
+    # Add input confirmation to conversation history
+    context.user_data['conversation_history'].append({
+        'role': 'system',
+        'message': f"Input sent: {user_input}",
+        'timestamp': datetime.datetime.now()
+    })
     
     # Comprehensive fix for input handling that works with multiple inputs in loops
     try:
@@ -668,6 +751,13 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         logger.error(f"Input handling error: {e}")
         await update.message.reply_text(f"Error sending input: {str(e)}")
         
+        # Add to conversation history
+        context.user_data['conversation_history'].append({
+            'role': 'system',
+            'message': f"Error sending input: {str(e)}",
+            'timestamp': datetime.datetime.now()
+        })
+        
         # If we encounter a serious error, we might need to restart the process
         if "Broken pipe" in str(e) or "Connection reset" in str(e):
             await update.message.reply_text("Connection to the program was lost. Please restart.")
@@ -692,6 +782,19 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     else:
         context.user_data['program_title'] = title
     
+    # Add to conversation history
+    context.user_data['conversation_history'].append({
+        'role': 'user',
+        'message': title,
+        'timestamp': datetime.datetime.now()
+    })
+    
+    context.user_data['conversation_history'].append({
+        'role': 'system',
+        'message': f"Using title: {context.user_data['program_title']}",
+        'timestamp': datetime.datetime.now()
+    })
+    
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
@@ -702,6 +805,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
         program_title = context.user_data.get('program_title', "Python Program Execution Report")
+        conversation_history = context.user_data.get('conversation_history', [])
+        inputs = context.user_data.get('inputs', [])
 
         # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
@@ -767,6 +872,62 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .output-content {{
                     page-break-before: avoid;
                 }}
+                .conversation-section {{
+                    margin-top: 30px;
+                    page-break-inside: avoid;
+                }}
+                .conversation-title {{
+                    font-size: 25px;
+                    text-decoration: underline;
+                    text-decoration-thickness: 5px;
+                    font-weight: bold;
+                    margin-top: 20px;
+                    page-break-after: avoid;
+                }}
+                .message {{
+                    margin: 10px 0;
+                    padding: 10px;
+                    border-radius: 5px;
+                }}
+                .program {{
+                    background-color: #f0f0f0;
+                    border-left: 5px solid #555;
+                }}
+                .user {{
+                    background-color: #e6f7ff;
+                    border-left: 5px solid #1890ff;
+                    font-weight: bold;
+                }}
+                .system {{
+                    background-color: #f6ffed;
+                    border-left: 5px solid #52c41a;
+                    font-style: italic;
+                }}
+                .timestamp {{
+                    font-size: 12px;
+                    color: #888;
+                    margin-top: 5px;
+                }}
+                .input-list {{
+                    margin-top: 20px;
+                    page-break-inside: avoid;
+                }}
+                .input-title {{
+                    font-size: 25px;
+                    text-decoration: underline;
+                    text-decoration-thickness: 5px;
+                    font-weight: bold;
+                    margin-top: 20px;
+                    page-break-after: avoid;
+                }}
+                .input-item {{
+                    background-color: #e6f7ff;
+                    padding: 10px;
+                    margin: 5px 0;
+                    border-radius: 5px;
+                    font-family: 'Courier New', monospace;
+                    font-weight: bold;
+                }}
             </style>
         </head>
         <body>
@@ -776,7 +937,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 <div class="code-section">
                     <pre><code>{html.escape(code)}</code></pre>
                 </div>
+                
+                <div class="conversation-section">
+                    <h1 class="conversation-title">CONVERSATION HISTORY</h1>
+                    {generate_conversation_html(conversation_history)}
+                </div>
+                
+                <div class="input-list">
+                    <h1 class="input-title">USER INPUTS</h1>
+                    {generate_inputs_html(inputs)}
+                </div>
+                
                 <div class="terminal-view">
+                    <h1 class="output-title">COMPLETE OUTPUT</h1>
                     {reconstruct_terminal_view(context)}
                 </div>
             </div>
@@ -855,6 +1028,42 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
+def generate_conversation_html(conversation_history):
+    """Generate HTML for the conversation history section"""
+    if not conversation_history:
+        return "<p>No conversation history available</p>"
+    
+    html = ""
+    for entry in conversation_history:
+        role = entry.get('role', 'system')
+        message = entry.get('message', '')
+        timestamp = entry.get('timestamp', datetime.datetime.now())
+        
+        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        
+        html += f"""
+        <div class="message {role}">
+            {html.escape(message)}
+            <div class="timestamp">{timestamp_str}</div>
+        </div>
+        """
+    
+    return html
+
+def generate_inputs_html(inputs):
+    """Generate HTML for the user inputs section"""
+    if not inputs:
+        return "<p>No user inputs recorded</p>"
+    
+    html = ""
+    for i, input_value in enumerate(inputs, 1):
+        html += f"""
+        <div class="input-item">
+            Input #{i}: {html.escape(input_value)}
+        </div>
+        """
+    
+    return html
 
 def reconstruct_terminal_view(context):
     """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
@@ -867,20 +1076,17 @@ def reconstruct_terminal_view(context):
             raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
 
         return f"""
-        <div class="terminal-view" style="page-break-inside: avoid;">
-            <h1 class="output-title">OUTPUT</h1>
-            <div class="output-content" style="
-                font-family: 'Courier New', monospace;
-                white-space: pre;
-                font-size: 18px;
-                line-height: 1.2;
-                background: #FFFFFF;
-                padding: 10px;
-                border-radius: 3px;
-                overflow-x: auto;
-                page-break-inside: avoid;
-            ">{html.escape(raw_output)}</div>
-        </div>
+        <div class="output-content" style="
+            font-family: 'Courier New', monospace;
+            white-space: pre;
+            font-size: 18px;
+            line-height: 1.2;
+            background: #FFFFFF;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            page-break-inside: avoid;
+        ">{html.escape(raw_output)}</div>
         """
 
     return "<pre>No terminal output available</pre>"
@@ -913,7 +1119,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "no_psutil_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
