@@ -407,6 +407,12 @@ async def read_process_output(update: Update, context: CallbackContext):
             if context.user_data.get('is_sending_input', False):
                 await asyncio.sleep(0.2)
                 continue
+
+            # ✅ Flush buffer every loop iteration (even if process is still running)
+            if output_buffer.strip():
+                new_buffer = process_output_chunk(context, output_buffer, update)
+                output_buffer = new_buffer
+                context.user_data['output_buffer'] = new_buffer
                 
             # Check if process has completed
             if process.returncode is not None:
@@ -575,7 +581,7 @@ def process_output_chunk(context, buffer, update):
     stats = context.user_data.get('activity_stats', {})
     
     # First check if the entire buffer might be a prompt without a newline
-    if buffer and not buffer.endswith('\n'):
+    if buffer and (not buffer.endswith('\n') or '\n' not in buffer):
         is_prompt, prompt_text = detect_prompt(buffer, patterns)
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
