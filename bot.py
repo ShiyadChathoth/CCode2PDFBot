@@ -643,14 +643,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 caption=f"Execution report for {program_title}"
             )
             if update.message:
-    await update.message.reply_text("You can use /start to run another program or /cancel to end.")
-else:
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="You can use /start to run another program or /cancel to end."
-    )
-
-
+                await update.message.reply_text("You can use /start to run another program or /cancel to end.")
+            else:
+                await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="You can use /start to run another program or /cancel to end."
+        )
+    
     except Exception as e:
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
