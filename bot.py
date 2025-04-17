@@ -43,6 +43,9 @@ LANGUAGE_CHOICE, CODE, RUNNING, TITLE_INPUT = range(4)
 EXECUTION_TIMEOUT = 30
 
 async def start(update: Update, context: CallbackContext) -> int:
+    # Clear any previous state
+    context.user_data.clear()
+    
     keyboard = [['C', 'Python']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
@@ -100,6 +103,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['last_prompt'] = ""
     context.user_data['pending_messages'] = []  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
+    context.user_data['title_requested'] = False  # Flag to track if title has been requested
     
     if language == 'C':
         return await handle_c_code(update, context)
@@ -418,10 +422,12 @@ sys.stdout = original_stdout
                         state['completed'] = True
                         await update.message.reply_text(f"Program output:\n{clean_output}\n\nProgram execution completed.")
                         
-                        # Ask for title
-                        await asyncio.sleep(0.8)
-                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-                        return TITLE_INPUT
+                        # Ask for title only if not already requested
+                        if not context.user_data.get('title_requested', False):
+                            context.user_data['title_requested'] = True
+                            await asyncio.sleep(0.8)
+                            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                            return TITLE_INPUT
                 
                 # Check if the program is waiting for input by looking for input prompts
                 if "Enter your guess:" in output or any(pattern in output for pattern in context.user_data.get('input_patterns', [])):
@@ -442,10 +448,12 @@ sys.stdout = original_stdout
                         state['completed'] = True
                         await update.message.reply_text(f"Program output:\n{clean_output}\n\nProgram execution completed.")
                         
-                        # Ask for title
-                        await asyncio.sleep(0.8)
-                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-                        return TITLE_INPUT
+                        # Ask for title only if not already requested
+                        if not context.user_data.get('title_requested', False):
+                            context.user_data['title_requested'] = True
+                            await asyncio.sleep(0.8)
+                            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                            return TITLE_INPUT
             else:
                 # Check if there was an execution error
                 error_match = re.search(r"__EXECUTION_ERROR__: (.*)", output)
@@ -552,8 +560,14 @@ async def read_process_output(update: Update, context: CallbackContext):
             # Notify the user
             try:
                 await update.message.reply_text(f"Program execution timed out after {EXECUTION_TIMEOUT} seconds. Execution terminated.")
-                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                
+                # Mark program as completed
                 context.user_data['program_completed'] = True
+                
+                # Ask for title only if not already requested
+                if not context.user_data.get('title_requested', False):
+                    context.user_data['title_requested'] = True
+                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             except Exception as e:
                 logger.error(f"Error sending timeout message: {e}")
     
@@ -619,10 +633,12 @@ async def read_process_output(update: Update, context: CallbackContext):
                         # Send the completion message and wait for it to be sent
                         await update.message.reply_text("Program execution completed.")
                         
-                        # Wait a bit more before asking for title
-                        await asyncio.sleep(0.8)
-                        
-                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                        # Ask for title only if not already requested
+                        if not context.user_data.get('title_requested', False):
+                            context.user_data['title_requested'] = True
+                            # Wait a bit more before asking for title
+                            await asyncio.sleep(0.8)
+                            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                         
                         # Cancel the timeout task
                         timeout_task.cancel()
@@ -724,10 +740,12 @@ async def read_process_output(update: Update, context: CallbackContext):
                 # Send completion message and wait for it to be sent
                 await update.message.reply_text("Program execution completed.")
                 
-                # Wait a bit more before asking for title
-                await asyncio.sleep(0.8)
-                
-                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                # Ask for title only if not already requested
+                if not context.user_data.get('title_requested', False):
+                    context.user_data['title_requested'] = True
+                    # Wait a bit more before asking for title
+                    await asyncio.sleep(0.8)
+                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                 
                 # Cancel the timeout task
                 timeout_task.cancel()
@@ -737,7 +755,12 @@ async def read_process_output(update: Update, context: CallbackContext):
         logger.error(f"Error in read_process_output: {str(e)}\n{traceback.format_exc()}")
         try:
             await update.message.reply_text(f"Error monitoring program output: {str(e)}")
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            
+            # Ask for title only if not already requested
+            if not context.user_data.get('title_requested', False):
+                context.user_data['title_requested'] = True
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            
             context.user_data['program_completed'] = True
             
             # Cancel the timeout task
@@ -892,7 +915,12 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
             context.user_data['program_completed'] = True
             
             await update.message.reply_text("Program execution terminated by user.")
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            
+            # Ask for title only if not already requested
+            if not context.user_data.get('title_requested', False):
+                context.user_data['title_requested'] = True
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            
             return TITLE_INPUT
         
         # Execute with the new input
@@ -945,7 +973,11 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         
         context.user_data['program_completed'] = True
         
-        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+        # Ask for title only if not already requested
+        if not context.user_data.get('title_requested', False):
+            context.user_data['title_requested'] = True
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+        
         return TITLE_INPUT
     
     execution_log.append({
@@ -1017,6 +1049,9 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
 async def handle_title_input(update: Update, context: CallbackContext) -> int:
     title = update.message.text
     language = context.user_data.get('language', 'C')
+    
+    # Mark that we've received the title input
+    context.user_data['title_received'] = True
     
     if title.lower() == 'skip':
         context.user_data['program_title'] = f"{language} Program Execution Report"
@@ -1278,7 +1313,17 @@ async def cleanup(context: CallbackContext):
             except Exception as e:
                 logger.error(f"Error removing PDF file {file}: {str(e)}")
     
+    # Clear user data but preserve certain flags for conversation flow
+    title_requested = context.user_data.get('title_requested', False)
+    title_received = context.user_data.get('title_received', False)
+    program_completed = context.user_data.get('program_completed', False)
+    
     context.user_data.clear()
+    
+    # Restore critical flags if needed for conversation flow
+    if not title_received and (title_requested or program_completed):
+        context.user_data['title_requested'] = title_requested
+        context.user_data['program_completed'] = program_completed
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled. You can use /start to begin again.")
