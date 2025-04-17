@@ -223,6 +223,7 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
         })
         
         # Run the Python code with unbuffered output
+        # Use -u flag to ensure unbuffered I/O which is critical for interactive programs
         process = await asyncio.create_subprocess_exec(
             "python3", "-u", "temp.py",
             stdin=PIPE,
@@ -576,6 +577,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     process = context.user_data.get('process')
     execution_log = context.user_data['execution_log']
     terminal_log = context.user_data['terminal_log']
+    language = context.user_data.get('language', 'C')
 
     # If program is already completed, treat this as title input
     if context.user_data.get('program_completed', False):
@@ -594,8 +596,27 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
             'message': 'User terminated the program.',
             'timestamp': datetime.datetime.now()
         })
-        await process.stdin.drain()
-        process.stdin.close()
+        
+        # Properly close stdin to avoid hanging
+        try:
+            await process.stdin.drain()
+            process.stdin.close()
+        except Exception as e:
+            logger.error(f"Error closing stdin: {e}")
+        
+        # For Python programs, we may need to terminate more forcefully
+        # since they might be waiting for input in a loop
+        if language == 'Python' and process.returncode is None:
+            try:
+                process.terminate()
+                # Give it a moment to terminate gracefully
+                await asyncio.sleep(0.5)
+                # If still running, force kill
+                if process.returncode is None:
+                    process.kill()
+            except Exception as e:
+                logger.error(f"Error terminating process: {e}")
+        
         await process.wait()
         
         # Add delay to ensure all output is processed
@@ -620,28 +641,47 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     # Send the input confirmation message first and await it to ensure order
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
     
-    # Only after confirmation is sent, send the input to the process
-    # Fix for the encoding issue - handle both string and bytes properly
+    # Comprehensive fix for input handling that works with multiple inputs in loops
     try:
-        # First try the normal approach
-        process.stdin.write((user_input + "\n").encode())
-    except AttributeError:
-        # If we get an encoding error, the input might already be bytes
-        # or there's another issue with encoding
-        try:
-            # Try to write directly if it's already bytes
-            if isinstance(user_input, bytes):
-                process.stdin.write(user_input + b"\n")
-            else:
-                # Try with different encoding
-                process.stdin.write(bytes(user_input + "\n", 'utf-8'))
-        except Exception as e:
-            logger.error(f"Input encoding error: {e}")
-            await update.message.reply_text(f"Error sending input: {str(e)}")
-    
-    await process.stdin.drain()
-    context.user_data['inputs'].append(user_input)
-    context.user_data['waiting_for_input'] = False
+        # Ensure the process is still running before sending input
+        if process.returncode is not None:
+            await update.message.reply_text("Program has ended and cannot receive more input.")
+            context.user_data['is_sending_input'] = False
+            return RUNNING
+            
+        # Add newline to input if not already present
+        input_with_newline = user_input if user_input.endswith('\n') else user_input + '\n'
+        
+        # Convert to bytes with proper encoding
+        input_bytes = None
+        if isinstance(input_with_newline, bytes):
+            input_bytes = input_with_newline
+        else:
+            try:
+                input_bytes = input_with_newline.encode('utf-8')
+            except UnicodeEncodeError:
+                # Try another encoding if utf-8 fails
+                input_bytes = input_with_newline.encode('latin-1')
+        
+        # Write to stdin and flush
+        if input_bytes:
+            process.stdin.write(input_bytes)
+            await process.stdin.drain()
+            
+            # Store the input for reference
+            context.user_data['inputs'].append(user_input)
+            context.user_data['waiting_for_input'] = False
+        else:
+            raise ValueError("Failed to encode input")
+            
+    except Exception as e:
+        logger.error(f"Input handling error: {e}")
+        await update.message.reply_text(f"Error sending input: {str(e)}")
+        
+        # If we encounter a serious error, we might need to restart the process
+        if "Broken pipe" in str(e) or "Connection reset" in str(e):
+            await update.message.reply_text("Connection to the program was lost. Please restart.")
+            return ConversationHandler.END
     
     # Add a small delay to ensure message ordering
     await asyncio.sleep(0.2)
