@@ -50,6 +50,7 @@ LANGUAGE_CHOICE, CODE, RUNNING, TITLE_INPUT = range(4)
 DEFAULT_IDLE_TIMEOUT = 60  # Time with no activity before considering idle
 DEFAULT_MAX_RUNTIME = 300  # Maximum total runtime regardless of activity (5 minutes)
 ACTIVITY_CHECK_INTERVAL = 5  # How often to check for activity
+FINAL_OUTPUT_CAPTURE_DELAY = 2  # Delay after program completion to ensure final output is captured
 
 async def start(update: Update, context: CallbackContext) -> int:
     # Clear any previous state
@@ -95,7 +96,11 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             "⚠️ I detected and fixed non-standard whitespace characters in your code that would cause errors."
         )
     
-    context.user_data['code'] = code
+    # Modify the code to add a delay after completion to ensure final output is captured
+    modified_code = add_output_capture_delay(code)
+    
+    context.user_data['code'] = code  # Store original code for display
+    context.user_data['modified_code'] = modified_code  # Store modified code for execution
     context.user_data['output'] = []
     context.user_data['inputs'] = []
     context.user_data['errors'] = []
@@ -109,6 +114,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
     context.user_data['all_prompts'] = []  # Track all prompts for final capture
+    context.user_data['final_output_captured'] = False  # Flag to track if final output has been captured
     
     # Initialize terminal simulation for PDF
     context.user_data['terminal_simulation'] = []
@@ -126,7 +132,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     
     # Check for syntax errors
     with open("temp.py", "w") as file:
-        file.write(code)
+        file.write(code)  # Use original code for syntax check
     
     syntax_check = subprocess.run(
         ["python3", "-m", "py_compile", "temp.py"], 
@@ -172,6 +178,34 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     # Use a simpler, more direct approach for execution
     return await execute_python_directly(update, context)
 
+def add_output_capture_delay(code):
+    """Add a delay after program completion to ensure final output is captured"""
+    # Add import for time if not already present
+    if "import time" not in code and "from time import" not in code:
+        code_lines = code.split('\n')
+        # Find a good place to add the import (after other imports)
+        import_added = False
+        for i, line in enumerate(code_lines):
+            if line.startswith('import ') or line.startswith('from '):
+                # Add after the last import
+                import_index = i
+                import_added = True
+        
+        if import_added:
+            code_lines.insert(import_index + 1, 'import time  # Added for output capture')
+        else:
+            # No imports found, add at the beginning
+            code_lines.insert(0, 'import time  # Added for output capture')
+        
+        # Add a delay at the end of the code
+        code_lines.append('\n# Added delay to ensure final output is captured')
+        code_lines.append(f'time.sleep({FINAL_OUTPUT_CAPTURE_DELAY})  # Ensure final output is captured')
+        
+        return '\n'.join(code_lines)
+    else:
+        # Time is already imported, just add the delay at the end
+        return code + f'\n\n# Added delay to ensure final output is captured\ntime.sleep({FINAL_OUTPUT_CAPTURE_DELAY})  # Ensure final output is captured'
+
 def extract_input_statements(code):
     """Extract potential input prompt patterns from Python code."""
     input_patterns = []
@@ -189,15 +223,15 @@ def extract_input_statements(code):
 async def execute_python_directly(update: Update, context: CallbackContext) -> int:
     """Execute Python code directly with a simpler approach"""
     try:
-        # Get the user's code
-        code = context.user_data['code']
+        # Get the modified code with output capture delay
+        modified_code = context.user_data['modified_code']
         
         # Create a simple wrapper script that just runs the code
         with open("simple_execution.py", "w") as file:
-            file.write(code)
+            file.write(modified_code)
         
         # Log that we're about to execute
-        logger.info("Executing Python code directly")
+        logger.info("Executing Python code directly with output capture delay")
         
         # Start the process with unbuffered output
         process = await asyncio.create_subprocess_exec(
@@ -282,6 +316,9 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                         # Check if there's a last prompt that needs to be captured
                         await ensure_all_prompts_captured(context)
                         
+                        # Ensure final output is captured
+                        await ensure_final_output_captured(context)
+                        
                         await update.message.reply_text(
                             f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
                         )
@@ -317,6 +354,9 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                 
                 # Check if there's a last prompt that needs to be captured
                 await ensure_all_prompts_captured(context)
+                
+                # Ensure final output is captured
+                await ensure_final_output_captured(context)
                 
                 await update.message.reply_text(
                     f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
@@ -386,6 +426,72 @@ async def ensure_all_prompts_captured(context):
     except Exception as e:
         logger.error(f"Error ensuring all prompts are captured: {str(e)}")
 
+async def ensure_final_output_captured(context):
+    """Ensure final output messages are captured in the terminal simulation"""
+    try:
+        # Check if we've already done this
+        if context.user_data.get('final_output_captured', False):
+            return
+            
+        # Mark that we've done this check
+        context.user_data['final_output_captured'] = True
+        
+        # Get the output buffer and process any remaining content
+        output_buffer = context.user_data.get('output_buffer', '')
+        if output_buffer:
+            logger.info(f"Processing final output buffer: {output_buffer}")
+            
+            # Add to terminal simulation as output
+            context.user_data['terminal_simulation'].append({
+                'type': 'output',
+                'content': output_buffer
+            })
+            
+            # Add to execution log
+            context.user_data['execution_log'].append({
+                'type': 'output',
+                'message': output_buffer,
+                'timestamp': datetime.datetime.now(),
+                'raw': output_buffer
+            })
+            
+            # Clear the buffer
+            context.user_data['output_buffer'] = ''
+            
+        # Check for success messages in the terminal simulation
+        terminal_simulation = context.user_data.get('terminal_simulation', [])
+        
+        # Look for success patterns in the last few entries
+        success_patterns = [
+            "correct",
+            "congratulations",
+            "success",
+            "completed",
+            "finished",
+            "won",
+            "🎉",
+            "✓",
+            "✅"
+        ]
+        
+        # Check the last 5 entries for success messages that might have been missed
+        for i in range(min(5, len(terminal_simulation))):
+            entry = terminal_simulation[-(i+1)]
+            content = entry.get('content', '').lower()
+            
+            # Check if this looks like a success message that wasn't properly captured
+            if any(pattern in content.lower() for pattern in success_patterns):
+                logger.info(f"Found potential success message: {content}")
+                
+                # If it's not already marked as output, add it again as output to ensure it's displayed
+                if entry.get('type') != 'output':
+                    context.user_data['terminal_simulation'].append({
+                        'type': 'output',
+                        'content': entry.get('content', '')
+                    })
+    except Exception as e:
+        logger.error(f"Error ensuring final output is captured: {str(e)}")
+
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
     output = context.user_data['output']
@@ -407,28 +513,10 @@ async def read_process_output(update: Update, context: CallbackContext):
             if context.user_data.get('is_sending_input', False):
                 await asyncio.sleep(0.2)
                 continue
-
-            # ✅ Flush buffer every loop iteration (even if process is still running)
-            if output_buffer.strip():
-                new_buffer = process_output_chunk(context, output_buffer, update)
-                output_buffer = new_buffer
-                context.user_data['output_buffer'] = new_buffer
                 
             # Check if process has completed
             if process.returncode is not None:
-                # 🕒 Give time for last print statements to flush
-                await asyncio.sleep(0.5)
-
-                 # ✅ Try to read remaining output from the process
-                try:
-                    remaining_output = await process.stdout.read()
-                    if remaining_output:
-                        output_buffer += remaining_output.decode()
-                except:
-                    pass
-                    
-                # ✅ Process remaining output
-                if output_buffer.strip():
+                if output_buffer:
                     process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
@@ -437,11 +525,15 @@ async def read_process_output(update: Update, context: CallbackContext):
                 if not context.user_data.get('finishing_initiated', False):
                     context.user_data['finishing_initiated'] = True
                     
-                    # Wait a bit to ensure all output is processed
-                    await asyncio.sleep(1.5)
+                    # Wait a bit longer to ensure all output is processed
+                    # This is especially important for capturing the final success message
+                    await asyncio.sleep(2.0)
                     
                     # Ensure all prompts are captured
                     await ensure_all_prompts_captured(context)
+                    
+                    # Ensure final output is captured
+                    await ensure_final_output_captured(context)
                     
                     execution_log.append({
                         'type': 'system',
@@ -593,7 +685,7 @@ def process_output_chunk(context, buffer, update):
     stats = context.user_data.get('activity_stats', {})
     
     # First check if the entire buffer might be a prompt without a newline
-    if buffer and (not buffer.endswith('\n') or '\n' not in buffer):
+    if buffer and not buffer.endswith('\n'):
         is_prompt, prompt_text = detect_prompt(buffer, patterns)
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
@@ -647,6 +739,9 @@ def process_output_chunk(context, buffer, update):
             # Enhanced prompt detection
             is_prompt, prompt_text = detect_prompt(line_stripped, patterns)
             
+            # Check for success messages that might be final output
+            is_success_message = detect_success_message(line_stripped)
+            
             if is_prompt:
                 context.user_data['last_prompt'] = prompt_text
                 context.user_data['waiting_for_input'] = True
@@ -682,6 +777,22 @@ def process_output_chunk(context, buffer, update):
             context.user_data['activity_stats'] = stats
     
     return new_buffer
+
+def detect_success_message(line):
+    """Detect if a line contains a success message that might be final output"""
+    success_patterns = [
+        "correct",
+        "congratulations",
+        "success",
+        "completed",
+        "finished",
+        "won",
+        "🎉",
+        "✓",
+        "✅"
+    ]
+    
+    return any(pattern in line.lower() for pattern in success_patterns)
 
 def detect_prompt(line, patterns):
     """Enhanced detection for prompts. Returns (is_prompt, prompt_text)"""
@@ -752,6 +863,9 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         
         # Ensure all prompts are captured
         await ensure_all_prompts_captured(context)
+        
+        # Ensure final output is captured
+        await ensure_final_output_captured(context)
         
         await update.message.reply_text("Program execution terminated by user.")
         
@@ -872,12 +986,16 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     # Ensure all prompts are captured before generating PDF
     await ensure_all_prompts_captured(context)
     
+    # Ensure final output is captured
+    await ensure_final_output_captured(context)
+    
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
     return ConversationHandler.END
 
 async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
+        # Use original code for display (not the modified code with delay)
         code = context.user_data['code']
         terminal_simulation = context.user_data.get('terminal_simulation', [])
         program_title = context.user_data.get('program_title', "Python Program Execution Report")
@@ -1079,7 +1197,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
