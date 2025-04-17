@@ -932,10 +932,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         </head>
         <body>
             <div class="page">
-                <div class="program-title">{html.escape(program_title)}</div>
+                <div class="program-title">{html.escape(str(program_title))}</div>
                 <div class="language-indicator">Language: Python</div>
                 <div class="code-section">
-                    <pre><code>{html.escape(code)}</code></pre>
+                    <pre><code>{html.escape(str(code))}</code></pre>
                 </div>
                 
                 <div class="conversation-section">
@@ -962,7 +962,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
         # Generate sanitized filename from title
         # Replace invalid filename characters with underscores and ensure it ends with .pdf
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", str(program_title))
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
@@ -1043,7 +1043,7 @@ def generate_conversation_html(conversation_history):
         
         html += f"""
         <div class="message {role}">
-            {html.escape(message)}
+            {html.escape(str(message))}
             <div class="timestamp">{timestamp_str}</div>
         </div>
         """
@@ -1059,7 +1059,7 @@ def generate_inputs_html(inputs):
     for i, input_value in enumerate(inputs, 1):
         html += f"""
         <div class="input-item">
-            Input #{i}: {html.escape(input_value)}
+            Input #{i}: {html.escape(str(input_value))}
         </div>
         """
     
@@ -1086,7 +1086,7 @@ def reconstruct_terminal_view(context):
             border-radius: 3px;
             overflow-x: auto;
             page-break-inside: avoid;
-        ">{html.escape(raw_output)}</div>
+        ">{html.escape(str(raw_output))}</div>
         """
 
     return "<pre>No terminal output available</pre>"
@@ -1119,7 +1119,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
