@@ -21,8 +21,9 @@ import re
 import unicodedata
 import sys
 import traceback
+import signal
 
-# Set up logging
+# Set up logging with more detailed format
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -37,6 +38,9 @@ if not TOKEN:
 
 # States for ConversationHandler
 LANGUAGE_CHOICE, CODE, RUNNING, TITLE_INPUT = range(4)
+
+# Global execution timeout (in seconds)
+EXECUTION_TIMEOUT = 30
 
 async def start(update: Update, context: CallbackContext) -> int:
     keyboard = [['C', 'Python']]
@@ -233,17 +237,50 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
         
         await update.message.reply_text("Python code validation successful! Ready to execute.")
         
-        # Initial execution without any inputs
-        result = await execute_python_with_inputs(update, context, [])
+        # Log that we're about to execute
+        logger.info("About to execute Python code with simplified approach")
         
-        # Log the result for debugging
-        logger.info(f"Initial execution result: {result}")
-        
-        return RUNNING
+        # Use a simpler, more direct approach for execution
+        return await execute_python_directly(update, context)
         
     except Exception as e:
         logger.error(f"Error in handle_python_code: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"An error occurred: {str(e)}")
+        return ConversationHandler.END
+
+async def execute_python_directly(update: Update, context: CallbackContext) -> int:
+    """Execute Python code directly with a simpler approach"""
+    try:
+        # Get the user's code
+        code = context.user_data['code']
+        
+        # Create a simple wrapper script that just runs the code
+        with open("simple_execution.py", "w") as file:
+            file.write(code)
+        
+        # Log that we're about to execute
+        logger.info("Executing Python code directly")
+        
+        # Start the process with unbuffered output
+        process = await asyncio.create_subprocess_exec(
+            "python3", "-u", "simple_execution.py",
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=PIPE
+        )
+        
+        # Store the process
+        context.user_data['process'] = process
+        
+        # Start reading output
+        asyncio.create_task(read_process_output(update, context))
+        
+        # Return to RUNNING state to handle input
+        return RUNNING
+        
+    except Exception as e:
+        logger.error(f"Error in execute_python_directly: {str(e)}\n{traceback.format_exc()}")
+        await update.message.reply_text(f"An error occurred during execution: {str(e)}")
         return ConversationHandler.END
 
 async def execute_python_with_inputs(update: Update, context: CallbackContext, inputs):
@@ -494,159 +531,225 @@ async def read_process_output(update: Update, context: CallbackContext):
     output_seen = False
     read_size = 1024
     timeout_counter = 0
+    start_time = time.time()
     
     # Add a flag to track if we're currently sending input
     context.user_data['is_sending_input'] = False
     
-    while True:
-        # If we're currently sending input, wait a bit to ensure proper message order
-        if context.user_data.get('is_sending_input', False):
-            await asyncio.sleep(0.2)
-            continue
+    # Set up a timeout task
+    async def check_timeout():
+        await asyncio.sleep(EXECUTION_TIMEOUT)
+        if process.returncode is None:
+            logger.warning(f"Process execution timed out after {EXECUTION_TIMEOUT} seconds")
+            try:
+                process.terminate()
+                await asyncio.sleep(0.5)
+                if process.returncode is None:
+                    process.kill()
+            except Exception as e:
+                logger.error(f"Error terminating timed out process: {e}")
             
-        stdout_task = asyncio.create_task(process.stdout.read(read_size))
-        stderr_task = asyncio.create_task(process.stderr.read(read_size))
-        
-        done, pending = await asyncio.wait(
-            [stdout_task, stderr_task],
-            return_when=asyncio.FIRST_COMPLETED,
-            timeout=0.3  # Reduced timeout to check more frequently
-        )
+            # Notify the user
+            try:
+                await update.message.reply_text(f"Program execution timed out after {EXECUTION_TIMEOUT} seconds. Execution terminated.")
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                context.user_data['program_completed'] = True
+            except Exception as e:
+                logger.error(f"Error sending timeout message: {e}")
+    
+    # Start the timeout checker
+    timeout_task = asyncio.create_task(check_timeout())
+    
+    try:
+        while True:
+            # If we're currently sending input, wait a bit to ensure proper message order
+            if context.user_data.get('is_sending_input', False):
+                await asyncio.sleep(0.2)
+                continue
+                
+            # Check if we've been running too long
+            if time.time() - start_time > EXECUTION_TIMEOUT:
+                logger.warning(f"Process execution loop running too long ({time.time() - start_time} seconds)")
+                if process.returncode is None:
+                    try:
+                        process.terminate()
+                        await asyncio.sleep(0.5)
+                        if process.returncode is None:
+                            process.kill()
+                    except Exception as e:
+                        logger.error(f"Error terminating long-running process: {e}")
+                
+                # Break out of the loop
+                break
+            
+            stdout_task = asyncio.create_task(process.stdout.read(read_size))
+            stderr_task = asyncio.create_task(process.stderr.read(read_size))
+            
+            done, pending = await asyncio.wait(
+                [stdout_task, stderr_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=0.3  # Reduced timeout to check more frequently
+            )
 
-        if not done:
+            if not done:
+                for task in pending:
+                    task.cancel()
+                
+                if process.returncode is not None:
+                    if output_buffer:
+                        process_output_chunk(context, output_buffer, update)
+                        output_buffer = ""
+                        context.user_data['output_buffer'] = ""
+                    
+                    # If this is the first time we're detecting completion, set up finishing sequence
+                    if not context.user_data.get('finishing_initiated', False):
+                        context.user_data['finishing_initiated'] = True
+                        
+                        # Wait a bit to ensure all output is processed
+                        await asyncio.sleep(1.5)
+                        
+                        execution_log.append({
+                            'type': 'system',
+                            'message': 'Program execution completed.',
+                            'timestamp': datetime.datetime.now()
+                        })
+                        
+                        context.user_data['program_completed'] = True
+                        
+                        # Send the completion message and wait for it to be sent
+                        await update.message.reply_text("Program execution completed.")
+                        
+                        # Wait a bit more before asking for title
+                        await asyncio.sleep(0.8)
+                        
+                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                        
+                        # Cancel the timeout task
+                        timeout_task.cancel()
+                        
+                        return TITLE_INPUT
+                    else:
+                        # We're already finishing, just wait
+                        await asyncio.sleep(0.1)
+                        continue
+                
+                # If we've seen output and there's been no new output for a while,
+                # check if we might be waiting for input
+                timeout_counter += 1
+                if output_seen and timeout_counter >= 3 and not context.user_data.get('waiting_for_input', False):
+                    if output_buffer:
+                        # Process any remaining output in the buffer
+                        # This is crucial for detecting prompts without newlines
+                        new_buffer = process_output_chunk(context, output_buffer, update)
+                        output_buffer = new_buffer
+                        context.user_data['output_buffer'] = new_buffer
+                    
+                    # If we're still not waiting for input after processing the buffer,
+                    # and there's been no output for a while, assume we're waiting
+                    if not context.user_data.get('waiting_for_input', False) and timeout_counter >= 5:
+                        context.user_data['waiting_for_input'] = True
+                        
+                        # Get the last detected prompt
+                        last_prompt = context.user_data.get('last_prompt', "unknown")
+                        
+                        input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                        
+                        execution_log.append({
+                            'type': 'system',
+                            'message': input_message,
+                            'timestamp': datetime.datetime.now()
+                        })
+                        await update.message.reply_text(input_message)
+                
+                continue
+
+            # Reset timeout counter when we get output
+            timeout_counter = 0
+            
+            if stdout_task in done:
+                stdout_chunk = await stdout_task
+                if stdout_chunk:
+                    decoded_chunk = stdout_chunk.decode()
+                    output_seen = True
+                    
+                    terminal_log.append(decoded_chunk)
+                    
+                    output_buffer += decoded_chunk
+                    context.user_data['output_buffer'] = output_buffer
+                    
+                    output_buffer = process_output_chunk(context, output_buffer, update)
+                    context.user_data['output_buffer'] = output_buffer
+
+            if stderr_task in done:
+                stderr_chunk = await stderr_task
+                if stderr_chunk:
+                    decoded_chunk = stderr_chunk.decode()
+                    
+                    for line in decoded_chunk.splitlines(True):
+                        errors.append(line.strip())
+                        
+                        execution_log.append({
+                            'type': 'error',
+                            'message': line.strip(),
+                            'timestamp': datetime.datetime.now(),
+                            'raw': line
+                        })
+                        
+                        await update.message.reply_text(f"Error: {line.strip()}")
+
             for task in pending:
                 task.cancel()
-            
-            if process.returncode is not None:
+
+            # Check if process has completed
+            if process.returncode is not None and not context.user_data.get('finishing_initiated', False):
                 if output_buffer:
                     process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
                 
-                # If this is the first time we're detecting completion, set up finishing sequence
-                if not context.user_data.get('finishing_initiated', False):
-                    context.user_data['finishing_initiated'] = True
-                    
-                    # Wait a bit to ensure all output is processed
-                    await asyncio.sleep(1.5)
-                    
-                    execution_log.append({
-                        'type': 'system',
-                        'message': 'Program execution completed.',
-                        'timestamp': datetime.datetime.now()
-                    })
-                    
-                    context.user_data['program_completed'] = True
-                    
-                    # Send the completion message and wait for it to be sent
-                    await update.message.reply_text("Program execution completed.")
-                    
-                    # Wait a bit more before asking for title
-                    await asyncio.sleep(0.8)
-                    
-                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-                    return TITLE_INPUT
-                else:
-                    # We're already finishing, just wait
-                    await asyncio.sleep(0.1)
-                    continue
-            
-            # If we've seen output and there's been no new output for a while,
-            # check if we might be waiting for input
-            timeout_counter += 1
-            if output_seen and timeout_counter >= 3 and not context.user_data.get('waiting_for_input', False):
-                if output_buffer:
-                    # Process any remaining output in the buffer
-                    # This is crucial for detecting prompts without newlines
-                    new_buffer = process_output_chunk(context, output_buffer, update)
-                    output_buffer = new_buffer
-                    context.user_data['output_buffer'] = new_buffer
+                # Mark that we've started the finishing sequence
+                context.user_data['finishing_initiated'] = True
                 
-                # If we're still not waiting for input after processing the buffer,
-                # and there's been no output for a while, assume we're waiting
-                if not context.user_data.get('waiting_for_input', False) and timeout_counter >= 5:
-                    context.user_data['waiting_for_input'] = True
-                    
-                    # Get the last detected prompt
-                    last_prompt = context.user_data.get('last_prompt', "unknown")
-                    
-                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
-                    
-                    execution_log.append({
-                        'type': 'system',
-                        'message': input_message,
-                        'timestamp': datetime.datetime.now()
-                    })
-                    await update.message.reply_text(input_message)
-            
-            continue
-
-        # Reset timeout counter when we get output
-        timeout_counter = 0
-        
-        if stdout_task in done:
-            stdout_chunk = await stdout_task
-            if stdout_chunk:
-                decoded_chunk = stdout_chunk.decode()
-                output_seen = True
+                # Add a significant delay to ensure all messages have been sent and processed
+                await asyncio.sleep(1.5)
                 
-                terminal_log.append(decoded_chunk)
+                execution_log.append({
+                    'type': 'system',
+                    'message': 'Program execution completed.',
+                    'timestamp': datetime.datetime.now()
+                })
                 
-                output_buffer += decoded_chunk
-                context.user_data['output_buffer'] = output_buffer
+                context.user_data['program_completed'] = True
                 
-                output_buffer = process_output_chunk(context, output_buffer, update)
-                context.user_data['output_buffer'] = output_buffer
-
-        if stderr_task in done:
-            stderr_chunk = await stderr_task
-            if stderr_chunk:
-                decoded_chunk = stderr_chunk.decode()
+                # Send completion message and wait for it to be sent
+                await update.message.reply_text("Program execution completed.")
                 
-                for line in decoded_chunk.splitlines(True):
-                    errors.append(line.strip())
-                    
-                    execution_log.append({
-                        'type': 'error',
-                        'message': line.strip(),
-                        'timestamp': datetime.datetime.now(),
-                        'raw': line
-                    })
-                    
-                    await update.message.reply_text(f"Error: {line.strip()}")
-
-        for task in pending:
-            task.cancel()
-
-        # Check if process has completed
-        if process.returncode is not None and not context.user_data.get('finishing_initiated', False):
-            if output_buffer:
-                process_output_chunk(context, output_buffer, update)
-                output_buffer = ""
-                context.user_data['output_buffer'] = ""
-            
-            # Mark that we've started the finishing sequence
-            context.user_data['finishing_initiated'] = True
-            
-            # Add a significant delay to ensure all messages have been sent and processed
-            await asyncio.sleep(1.5)
-            
-            execution_log.append({
-                'type': 'system',
-                'message': 'Program execution completed.',
-                'timestamp': datetime.datetime.now()
-            })
-            
+                # Wait a bit more before asking for title
+                await asyncio.sleep(0.8)
+                
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                
+                # Cancel the timeout task
+                timeout_task.cancel()
+                
+                return TITLE_INPUT
+    except Exception as e:
+        logger.error(f"Error in read_process_output: {str(e)}\n{traceback.format_exc()}")
+        try:
+            await update.message.reply_text(f"Error monitoring program output: {str(e)}")
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             context.user_data['program_completed'] = True
             
-            # Send completion message and wait for it to be sent
-            await update.message.reply_text("Program execution completed.")
+            # Cancel the timeout task
+            timeout_task.cancel()
             
-            # Wait a bit more before asking for title
-            await asyncio.sleep(0.8)
-            
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
+        except Exception as inner_e:
+            logger.error(f"Error sending error message: {inner_e}")
+            return RUNNING
+    finally:
+        # Make sure to cancel the timeout task if we're exiting early
+        timeout_task.cancel()
 
 async def process_output_message(update, message, prefix=""):
     """Helper function to send output messages with better ordering control"""
@@ -1135,12 +1238,20 @@ def reconstruct_terminal_view(context):
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
     if process and process.returncode is None:
-        process.terminate()
+        try:
+            process.terminate()
+            # Give it a moment to terminate gracefully
+            await asyncio.sleep(0.5)
+            # If still running, force kill
+            if process.returncode is None:
+                process.kill()
+        except Exception as e:
+            logger.error(f"Error terminating process during cleanup: {e}")
+        
         try:
             await process.wait()
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+            logger.error("Timeout waiting for process to terminate during cleanup")
     
     # Clean up temporary files based on language
     language = context.user_data.get('language', 'C')
@@ -1152,7 +1263,7 @@ async def cleanup(context: CallbackContext):
                 except Exception as e:
                     logger.error(f"Error removing file {file}: {str(e)}")
     else:  # Python
-        for file in ["temp.py", "direct_execution.py", "output.html"]:
+        for file in ["temp.py", "direct_execution.py", "simple_execution.py", "output.html"]:
             if os.path.exists(file):
                 try:
                     os.remove(file)
