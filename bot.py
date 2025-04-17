@@ -1,4 +1,3 @@
-
 from telegram import ReplyKeyboardMarkup
 from telegram import Update
 from telegram.ext import (
@@ -36,11 +35,33 @@ if not TOKEN:
     raise ValueError("No TOKEN provided in environment variables!")
 
 # States for ConversationHandler
-CODE, RUNNING, TITLE_INPUT = range(3)
+LANGUAGE_CHOICE, CODE, RUNNING, TITLE_INPUT = range(4)
 
 async def start(update: Update, context: CallbackContext) -> int:
+    keyboard = [['C', 'Python']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+    
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
+        'Hi! Please select the programming language you want to use:',
+        reply_markup=reply_markup
+    )
+    return LANGUAGE_CHOICE
+
+async def language_choice(update: Update, context: CallbackContext) -> int:
+    language = update.message.text
+    
+    if language not in ['C', 'Python']:
+        await update.message.reply_text(
+            'Please select either C or Python using the keyboard buttons.'
+        )
+        return LANGUAGE_CHOICE
+    
+    context.user_data['language'] = language
+    
+    await update.message.reply_text(
+        f'You selected {language}. Please send me your {language} code, and I will ' +
+        ('compile and execute' if language == 'C' else 'execute') + 
+        ' it step-by-step.'
     )
     return CODE
 
@@ -55,10 +76,11 @@ def clean_whitespace(code):
 async def handle_code(update: Update, context: CallbackContext) -> int:
     original_code = update.message.text
     code = clean_whitespace(original_code)
+    language = context.user_data.get('language', 'C')  # Default to C if not specified
     
     if code != original_code:
         await update.message.reply_text(
-            "⚠️ I detected and fixed non-standard whitespace characters in your code that would cause compilation errors."
+            "⚠️ I detected and fixed non-standard whitespace characters in your code that would cause errors."
         )
     
     context.user_data['code'] = code
@@ -73,6 +95,14 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['last_prompt'] = ""
     context.user_data['pending_messages'] = []  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
+    
+    if language == 'C':
+        return await handle_c_code(update, context)
+    else:  # Python
+        return await handle_python_code(update, context)
+
+async def handle_c_code(update: Update, context: CallbackContext) -> int:
+    code = context.user_data['code']
     
     # Store the printf statements from the code for later analysis
     printf_patterns = extract_printf_statements(code)
@@ -154,8 +184,64 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
 
+async def handle_python_code(update: Update, context: CallbackContext) -> int:
+    code = context.user_data['code']
+    
+    # Store the input statements from the code for later analysis
+    input_patterns = extract_input_statements(code)
+    context.user_data['input_patterns'] = input_patterns
+    
+    logger.info(f"Extracted input patterns: {input_patterns}")
+    
+    try:
+        # First, check for syntax errors
+        syntax_check = subprocess.run(
+            ["python3", "-m", "py_compile"], 
+            input=code.encode(), 
+            capture_output=True, 
+            text=True
+        )
+        
+        if syntax_check.returncode != 0:
+            context.user_data['execution_log'].append({
+                'type': 'error',
+                'message': f"Python Syntax Error:\n{syntax_check.stderr}",
+                'timestamp': datetime.datetime.now()
+            })
+            
+            await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
+            return ConversationHandler.END
+        
+        # Save the code to a temporary file
+        with open("temp.py", "w") as file:
+            file.write(code)
+        
+        context.user_data['execution_log'].append({
+            'type': 'system',
+            'message': 'Python code validation successful!',
+            'timestamp': datetime.datetime.now()
+        })
+        
+        # Run the Python code with unbuffered output
+        process = await asyncio.create_subprocess_exec(
+            "python3", "-u", "temp.py",
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=PIPE
+        )
+        
+        context.user_data['process'] = process
+        await update.message.reply_text("Python code validation successful! Running now...")
+        
+        asyncio.create_task(read_process_output(update, context))
+        return RUNNING
+        
+    except Exception as e:
+        await update.message.reply_text(f"An error occurred: {str(e)}")
+        return ConversationHandler.END
+
 def extract_printf_statements(code):
-    """Extract potential printf prompt patterns from the code."""
+    """Extract potential printf prompt patterns from C code."""
     # Look for printf statements that might be prompts
     printf_patterns = []
     
@@ -178,6 +264,27 @@ def extract_printf_statements(code):
     
     return printf_patterns
 
+def extract_input_statements(code):
+    """Extract potential input prompt patterns from Python code."""
+    # Look for input statements that might be prompts
+    input_patterns = []
+    
+    # Regex to find input statements with string literals
+    # This will match input("Some text: ") patterns
+    pattern = r'input\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
+    input_matches = re.finditer(pattern, code)
+    
+    for match in input_matches:
+        prompt_text = match.group(1)
+        # Clean escape sequences
+        prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
+        
+        # Only add non-empty prompts
+        if prompt_text.strip():
+            input_patterns.append(prompt_text)
+    
+    return input_patterns
+
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
     output = context.user_data['output']
@@ -185,6 +292,7 @@ async def read_process_output(update: Update, context: CallbackContext):
     execution_log = context.user_data['execution_log']
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
+    language = context.user_data.get('language', 'C')
     
     output_seen = False
     read_size = 1024
@@ -351,14 +459,20 @@ async def process_output_message(update, message, prefix=""):
         logger.error(f"Failed to send message: {e}")
 
 def process_output_chunk(context, buffer, update):
-    """Process the output buffer, preserving tabs and whitespace with improved printf prompt detection."""
+    """Process the output buffer, preserving tabs and whitespace with improved prompt detection."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    printf_patterns = context.user_data.get('printf_patterns', [])
+    language = context.user_data.get('language', 'C')
+    
+    # Get the appropriate patterns based on language
+    if language == 'C':
+        patterns = context.user_data.get('printf_patterns', [])
+    else:  # Python
+        patterns = context.user_data.get('input_patterns', [])
     
     # First check if the entire buffer might be a prompt without a newline
     if buffer and not buffer.endswith('\n'):
-        is_prompt, prompt_text = detect_prompt(buffer, printf_patterns)
+        is_prompt, prompt_text = detect_prompt(buffer, patterns, language)
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
             
@@ -390,7 +504,7 @@ def process_output_chunk(context, buffer, update):
             output.append(line_stripped)
             
             # Enhanced prompt detection
-            is_prompt, prompt_text = detect_prompt(line_stripped, printf_patterns)
+            is_prompt, prompt_text = detect_prompt(line_stripped, patterns, language)
             
             if is_prompt:
                 context.user_data['last_prompt'] = prompt_text
@@ -409,12 +523,12 @@ def process_output_chunk(context, buffer, update):
     
     return new_buffer
 
-def detect_prompt(line, printf_patterns):
-    """Enhanced detection for printf prompts. Returns (is_prompt, prompt_text)"""
+def detect_prompt(line, patterns, language):
+    """Enhanced detection for prompts. Returns (is_prompt, prompt_text)"""
     line_text = line.strip()
     
-    # First check if the line matches or closely matches any extracted printf patterns
-    for pattern in printf_patterns:
+    # First check if the line matches or closely matches any extracted patterns
+    for pattern in patterns:
         # Direct match
         if pattern in line_text:
             return True, line_text
@@ -522,9 +636,10 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
 
 async def handle_title_input(update: Update, context: CallbackContext) -> int:
     title = update.message.text
+    language = context.user_data.get('language', 'C')
     
     if title.lower() == 'skip':
-        context.user_data['program_title'] = "C Program Execution Report"
+        context.user_data['program_title'] = f"{language} Program Execution Report"
     else:
         context.user_data['program_title'] = title
     
@@ -537,7 +652,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
-        program_title = context.user_data.get('program_title', "C Program Execution Report")
+        language = context.user_data.get('language', 'C')
+        program_title = context.user_data.get('program_title', f"{language} Program Execution Report")
 
         # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
@@ -565,6 +681,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     text-decoration: underline;
                     text-decoration-thickness: 5px;
                     border-bottom: 3px;
+                }}
+                .language-indicator {{
+                    font-size: 18px;
+                    text-align: center;
+                    margin-bottom: 15px;
+                    color: #555;
                 }}
                 pre {{
                     font-family: 'Courier New', monospace;
@@ -602,14 +724,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <body>
             <div class="page">
                 <div class="program-title">{html.escape(program_title)}</div>
+                <div class="language-indicator">Language: {language}</div>
                 <div class="code-section">
                     <pre><code>{html.escape(code)}</code></pre>
                 </div>
-<div class="terminal-view">
-    {reconstruct_terminal_view(context)}
-</div>
-
-
+                <div class="terminal-view">
+                    {reconstruct_terminal_view(context)}
+                </div>
             </div>
         </body>
         </html>
@@ -648,7 +769,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="You can use /start to run another program or /cancel to end."
-        )
+            )
     
     except Exception as e:
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
@@ -685,28 +806,6 @@ def reconstruct_terminal_view(context):
 
     return "<pre>No terminal output available</pre>"
 
-
-
-
-
-def generate_system_messages_html(system_messages):
-    """Generate HTML for system messages section."""
-    if not system_messages:
-        return "<p>No system messages</p>"
-    
-    html_output = ""
-    
-    for msg in system_messages:
-        timestamp = msg['timestamp'].strftime("%H:%M:%S.%f")[:-3]
-        html_output += f"""
-        <div class="system-message-box">
-            <span class="timestamp">[{timestamp}]</span> <strong>System:</strong>
-            <p>{msg['message']}</p>
-        </div>
-        """
-    
-    return html_output
-
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
     if process and process.returncode is None:
@@ -717,25 +816,23 @@ async def cleanup(context: CallbackContext):
             process.kill()
             await process.wait()
     
-    for file in ["temp.c", "temp", "output.html"]:
-        if os.path.exists(file):
-            os.remove(file)
+    # Clean up temporary files based on language
+    language = context.user_data.get('language', 'C')
+    if language == 'C':
+        for file in ["temp.c", "temp", "output.html"]:
+            if os.path.exists(file):
+                os.remove(file)
+    else:  # Python
+        for file in ["temp.py", "output.html"]:
+            if os.path.exists(file):
+                os.remove(file)
     
+    # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "modified_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "dual_language_bot.py":
             os.remove(file)
     
     context.user_data.clear()
-
-async def start(update: Update, context: CallbackContext) -> int:
-    keyboard = [['/start', '/cancel']]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-
-    await update.message.reply_text(
-        "Hi! Send me your C code, and I will compile and run it.\n\nYou can use /cancel anytime to stop.",
-        reply_markup=reply_markup
-    )
-    return CODE
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled. You can use /start to begin again.")
@@ -748,6 +845,7 @@ def main() -> None:
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
+                LANGUAGE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_choice)],
                 CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
                 RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
                 TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
