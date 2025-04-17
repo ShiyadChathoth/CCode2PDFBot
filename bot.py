@@ -115,6 +115,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
     context.user_data['all_prompts'] = []  # Track all prompts for final capture
     context.user_data['final_output_captured'] = False  # Flag to track if final output has been captured
+    context.user_data['processed_entries'] = set()  # Track entries that have been processed to avoid duplicates
     
     # Initialize terminal simulation for PDF
     context.user_data['terminal_simulation'] = []
@@ -148,10 +149,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         })
         
         # Add to terminal simulation
-        context.user_data['terminal_simulation'].append({
-            'type': 'system',
-            'content': f"Python Syntax Error:\n{syntax_check.stderr}"
-        })
+        add_to_terminal_simulation(context, 'system', f"Python Syntax Error:\n{syntax_check.stderr}")
         
         await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
         return ConversationHandler.END
@@ -163,10 +161,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     })
     
     # Add to terminal simulation
-    context.user_data['terminal_simulation'].append({
-        'type': 'system',
-        'content': 'Python code validation successful! Ready to execute.'
-    })
+    add_to_terminal_simulation(context, 'system', 'Python code validation successful! Ready to execute.')
     
     # Extract input patterns for later use
     input_patterns = extract_input_statements(code)
@@ -177,6 +172,29 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     
     # Use a simpler, more direct approach for execution
     return await execute_python_directly(update, context)
+
+def add_to_terminal_simulation(context, entry_type, content):
+    """Add an entry to terminal simulation with duplicate detection"""
+    # Create a unique identifier for this entry
+    entry_id = f"{entry_type}:{content}"
+    
+    # Check if we've already processed this exact entry
+    processed_entries = context.user_data.get('processed_entries', set())
+    if entry_id in processed_entries:
+        logger.info(f"Skipping duplicate entry: {entry_id[:50]}...")
+        return False
+    
+    # Add to processed entries set
+    processed_entries.add(entry_id)
+    context.user_data['processed_entries'] = processed_entries
+    
+    # Add to terminal simulation
+    context.user_data['terminal_simulation'].append({
+        'type': entry_type,
+        'content': content
+    })
+    
+    return True
 
 def add_output_capture_delay(code):
     """Add a delay after program completion to ensure final output is captured"""
@@ -302,10 +320,11 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                         )
                         
                         # Add to terminal simulation
-                        context.user_data['terminal_simulation'].append({
-                            'type': 'system',
-                            'content': f"⚠️ Program idle for {stats['idle_time']} seconds. Will terminate soon if no activity."
-                        })
+                        add_to_terminal_simulation(
+                            context, 
+                            'system', 
+                            f"⚠️ Program idle for {stats['idle_time']} seconds. Will terminate soon if no activity."
+                        )
                         
                         # Give it some more time after the warning
                         stats['idle_time'] = DEFAULT_IDLE_TIMEOUT * 0.7
@@ -324,10 +343,11 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                         )
                         
                         # Add to terminal simulation
-                        context.user_data['terminal_simulation'].append({
-                            'type': 'system',
-                            'content': f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
-                        })
+                        add_to_terminal_simulation(
+                            context, 
+                            'system', 
+                            f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
+                        )
                         
                         try:
                             process.terminate()
@@ -363,10 +383,11 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                 )
                 
                 # Add to terminal simulation
-                context.user_data['terminal_simulation'].append({
-                    'type': 'system',
-                    'content': f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
-                })
+                add_to_terminal_simulation(
+                    context, 
+                    'system', 
+                    f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
+                )
                 
                 try:
                     process.terminate()
@@ -393,44 +414,25 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
         logger.error(f"Error in monitor_process_activity: {str(e)}\n{traceback.format_exc()}")
 
 async def ensure_all_prompts_captured(context):
-    """Ensure all detected prompts are captured in the terminal simulation"""
+    """Ensure all detected prompts are captured in the terminal simulation with duplicate detection"""
     try:
         # Get all prompts and the terminal simulation
         all_prompts = context.user_data.get('all_prompts', [])
-        terminal_simulation = context.user_data.get('terminal_simulation', [])
-        
-        # Get all prompt content already in the terminal simulation
-        existing_prompts = [
-            entry.get('content', '') 
-            for entry in terminal_simulation 
-            if entry.get('type') == 'prompt'
-        ]
         
         # Add any missing prompts to the terminal simulation
         for prompt in all_prompts:
-            if prompt not in existing_prompts:
-                logger.info(f"Adding missing prompt to terminal simulation: {prompt}")
-                context.user_data['terminal_simulation'].append({
-                    'type': 'prompt',
-                    'content': prompt
-                })
+            add_to_terminal_simulation(context, 'prompt', prompt)
         
         # Check if there's a last prompt that needs to be captured
         last_prompt = context.user_data.get('last_prompt', '')
-        if last_prompt:
-            existing_prompts_lower = [p.lower().strip() for p in existing_prompts]
-            if last_prompt.lower().strip() not in existing_prompts_lower:
-                logger.info(f"Adding last prompt to terminal simulation: {last_prompt}")
-                context.user_data['terminal_simulation'].append({
-                    'type': 'prompt',
-                    'content': last_prompt
-                })
-                
+        if last_prompt and last_prompt not in all_prompts:
+            add_to_terminal_simulation(context, 'prompt', last_prompt)
+            
     except Exception as e:
         logger.error(f"Error ensuring all prompts are captured: {str(e)}")
 
 async def ensure_final_output_captured(context):
-    """Ensure final output messages are captured in the terminal simulation"""
+    """Ensure final output messages are captured in the terminal simulation with duplicate detection"""
     try:
         # Check if we've already done this
         if context.user_data.get('final_output_captured', False):
@@ -444,11 +446,8 @@ async def ensure_final_output_captured(context):
         if output_buffer:
             logger.info(f"Processing final output buffer: {output_buffer}")
             
-            # Add to terminal simulation as output
-            context.user_data['terminal_simulation'].append({
-                'type': 'output',
-                'content': output_buffer
-            })
+            # Add to terminal simulation as output with duplicate detection
+            add_to_terminal_simulation(context, 'output', output_buffer)
             
             # Add to execution log
             context.user_data['execution_log'].append({
@@ -488,10 +487,7 @@ async def ensure_final_output_captured(context):
                 
                 # If it's not already marked as output, add it again as output to ensure it's displayed
                 if entry.get('type') != 'output':
-                    context.user_data['terminal_simulation'].append({
-                        'type': 'output',
-                        'content': entry.get('content', '')
-                    })
+                    add_to_terminal_simulation(context, 'output', entry.get('content', ''))
     except Exception as e:
         logger.error(f"Error ensuring final output is captured: {str(e)}")
 
@@ -545,10 +541,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                     })
                     
                     # Add to terminal simulation
-                    context.user_data['terminal_simulation'].append({
-                        'type': 'system',
-                        'content': 'Program execution completed.'
-                    })
+                    add_to_terminal_simulation(context, 'system', 'Program execution completed.')
                     
                     context.user_data['program_completed'] = True
                     
@@ -634,10 +627,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                         })
                         
                         # Add to terminal simulation
-                        context.user_data['terminal_simulation'].append({
-                            'type': 'error',
-                            'content': line.strip()
-                        })
+                        add_to_terminal_simulation(context, 'error', line.strip())
                         
                         await update.message.reply_text(f"Error: {line.strip()}")
                     
@@ -656,10 +646,7 @@ async def read_process_output(update: Update, context: CallbackContext):
             await update.message.reply_text(f"Error monitoring program output: {str(e)}")
             
             # Add to terminal simulation
-            context.user_data['terminal_simulation'].append({
-                'type': 'system',
-                'content': f"Error monitoring program output: {str(e)}"
-            })
+            add_to_terminal_simulation(context, 'system', f"Error monitoring program output: {str(e)}")
             
             # Ask for title only if not already requested
             if not context.user_data.get('title_requested', False):
@@ -708,11 +695,8 @@ def process_output_chunk(context, buffer, update):
             
             execution_log.append(log_entry)
             
-            # Add to terminal simulation
-            context.user_data['terminal_simulation'].append({
-                'type': 'prompt',
-                'content': buffer
-            })
+            # Add to terminal simulation with duplicate detection
+            add_to_terminal_simulation(context, 'prompt', buffer)
             
             asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
             
@@ -764,11 +748,8 @@ def process_output_chunk(context, buffer, update):
             
             execution_log.append(log_entry)
             
-            # Add to terminal simulation
-            context.user_data['terminal_simulation'].append({
-                'type': 'prompt' if is_prompt else 'output',
-                'content': line_stripped
-            })
+            # Add to terminal simulation with duplicate detection
+            add_to_terminal_simulation(context, 'prompt' if is_prompt else 'output', line_stripped)
             
             prefix = "Program prompt:" if is_prompt else "Program output:"
             
@@ -873,10 +854,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text("Program execution terminated by user.")
         
         # Add to terminal simulation
-        context.user_data['terminal_simulation'].append({
-            'type': 'system',
-            'content': "Program execution terminated by user."
-        })
+        add_to_terminal_simulation(context, 'system', "Program execution terminated by user.")
         
         context.user_data['program_completed'] = True
         
@@ -897,10 +875,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     context.user_data['is_sending_input'] = True
     
     # Add to terminal simulation - this is the user input
-    context.user_data['terminal_simulation'].append({
-        'type': 'input',
-        'content': user_input
-    })
+    add_to_terminal_simulation(context, 'input', user_input)
     
     # Send the input confirmation message first and await it to ensure order
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
@@ -951,10 +926,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text(f"Error sending input: {str(e)}")
         
         # Add to terminal simulation
-        context.user_data['terminal_simulation'].append({
-            'type': 'error',
-            'content': f"Error sending input: {str(e)}"
-        })
+        add_to_terminal_simulation(context, 'error', f"Error sending input: {str(e)}")
         
         # If we encounter a serious error, we might need to restart the process
         if "Broken pipe" in str(e) or "Connection reset" in str(e):
@@ -981,10 +953,7 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
         context.user_data['program_title'] = title
     
     # Add to terminal simulation
-    context.user_data['terminal_simulation'].append({
-        'type': 'system',
-        'content': f"Using title: {context.user_data['program_title']}"
-    })
+    add_to_terminal_simulation(context, 'system', f"Using title: {context.user_data['program_title']}")
     
     # Ensure all prompts are captured before generating PDF
     await ensure_all_prompts_captured(context)
@@ -1200,7 +1169,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py" and file != "fixed_duplicate_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
