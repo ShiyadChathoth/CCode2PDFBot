@@ -313,7 +313,7 @@ sys.stdout = captured_output
 
 try:
     # Original user code begins here
-    {context.user_data['code']}
+{context.user_data['code']}
     
     # Print a special marker to indicate successful completion
     print("\\n__EXECUTION_COMPLETED_SUCCESSFULLY__")
