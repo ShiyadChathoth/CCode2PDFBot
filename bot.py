@@ -621,7 +621,24 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
     
     # Only after confirmation is sent, send the input to the process
-    process.stdin.write((user_input + "\n").encode())
+    # Fix for the encoding issue - handle both string and bytes properly
+    try:
+        # First try the normal approach
+        process.stdin.write((user_input + "\n").encode())
+    except AttributeError:
+        # If we get an encoding error, the input might already be bytes
+        # or there's another issue with encoding
+        try:
+            # Try to write directly if it's already bytes
+            if isinstance(user_input, bytes):
+                process.stdin.write(user_input + b"\n")
+            else:
+                # Try with different encoding
+                process.stdin.write(bytes(user_input + "\n", 'utf-8'))
+        except Exception as e:
+            logger.error(f"Input encoding error: {e}")
+            await update.message.reply_text(f"Error sending input: {str(e)}")
+    
     await process.stdin.drain()
     context.user_data['inputs'].append(user_input)
     context.user_data['waiting_for_input'] = False
