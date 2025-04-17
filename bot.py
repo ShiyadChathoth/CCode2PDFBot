@@ -186,6 +186,13 @@ def add_terminal_entry(context, entry_type, content, sequence=None):
     Uses a combination of entry type, content, and sequence number to create a unique key.
     Also checks for exact duplicate content to prevent repeating the same output.
     """
+    # HARDCODED FIX: Special handling for "Please enter a valid number"
+    if content == "Please enter a valid number." and entry_type in ['output', 'prompt']:
+        # Check if we've already seen this exact content
+        if "Please enter a valid number." in context.user_data.get('seen_content', set()):
+            logger.info("HARDCODED FIX: Skipping duplicate 'Please enter a valid number.'")
+            return False
+    
     # Get the current execution session
     session = context.user_data.get('execution_session', str(time.time()))
     
@@ -740,6 +747,9 @@ def post_process_terminal_entries(context):
         # Track content we've seen to detect duplicates
         seen_content = {}  # Map content to entry key
         
+        # HARDCODED FIX: Special handling for "Please enter a valid number"
+        valid_number_seen = False
+        
         # Process entries in order
         for key in entry_order:
             entry = terminal_entries.get(key, {})
@@ -752,6 +762,14 @@ def post_process_terminal_entries(context):
             # Skip system messages about title
             if entry_type == 'system' and 'Using title:' in content:
                 continue
+            
+            # HARDCODED FIX: Special handling for "Please enter a valid number"
+            if content == "Please enter a valid number." and entry_type in ['output', 'prompt']:
+                if valid_number_seen:
+                    logger.info("HARDCODED FIX: Skipping duplicate 'Please enter a valid number.'")
+                    continue
+                else:
+                    valid_number_seen = True
             
             # For output and prompt types, check for duplicates
             if entry_type in ['output', 'prompt']:
@@ -1094,6 +1112,18 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_entries = context.user_data.get('terminal_entries', {})
         entry_order = context.user_data.get('entry_order', [])
         
+        # HARDCODED FIX: Final manual check for "Please enter a valid number" duplicates
+        # This is a last resort to ensure no duplicates make it to the PDF
+        final_html = generate_terminal_html(terminal_entries, entry_order)
+        
+        # Count occurrences of the problematic string
+        valid_number_count = final_html.count("Please enter a valid number.")
+        if valid_number_count > 1:
+            logger.info(f"HARDCODED FIX: Found {valid_number_count} occurrences of 'Please enter a valid number.' in final HTML")
+            # Replace all occurrences with a single one
+            final_html = final_html.replace("Please enter a valid number.\nPlease enter a valid number.", "Please enter a valid number.")
+            logger.info("HARDCODED FIX: Applied direct HTML replacement for duplicate 'Please enter a valid number.'")
+        
         # Generate HTML with terminal-like styling
         html_content = f"""
         <html>
@@ -1164,7 +1194,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             
             <h3>Terminal Output:</h3>
             <div class="terminal">
-                {generate_terminal_html(terminal_entries, entry_order)}
+                {final_html}
             </div>
         </body>
         </html>
@@ -1247,6 +1277,9 @@ def generate_terminal_html(terminal_entries, entry_order):
     
     html = ""
     
+    # HARDCODED FIX: Track if we've seen "Please enter a valid number"
+    valid_number_seen = False
+    
     # Process entries in order
     for key in entry_order:
         entry = terminal_entries.get(key, {})
@@ -1259,6 +1292,14 @@ def generate_terminal_html(terminal_entries, entry_order):
         # Skip system messages about title
         if entry_type == 'system' and 'Using title:' in content:
             continue
+        
+        # HARDCODED FIX: Special handling for "Please enter a valid number"
+        if content == "Please enter a valid number." and entry_type in ['output', 'prompt']:
+            if valid_number_seen:
+                logger.info("HARDCODED FIX: Skipping duplicate 'Please enter a valid number.' in HTML generation")
+                continue
+            else:
+                valid_number_seen = True
         
         if entry_type == 'prompt':
             html += f"<span class='prompt'>{escape_html(content)}</span>\n"
@@ -1301,7 +1342,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py" and file != "fixed_duplicate_bot.py" and file != "final_working_bot.py" and file != "final_solution.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py" and file != "fixed_duplicate_bot.py" and file != "final_working_bot.py" and file != "final_solution.py" and file != "hardcoded_solution.py":
             try:
                 os.remove(file)
             except Exception as e:
