@@ -20,10 +20,8 @@ import datetime
 import re
 import unicodedata
 import sys
-import traceback
-import signal
 
-# Set up logging with more detailed format
+# Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -39,20 +37,12 @@ if not TOKEN:
 # States for ConversationHandler
 LANGUAGE_CHOICE, CODE, RUNNING, TITLE_INPUT = range(4)
 
-# Default timeout settings (in seconds)
-DEFAULT_IDLE_TIMEOUT = 60  # Time with no activity before considering idle
-DEFAULT_MAX_RUNTIME = 300  # Maximum total runtime regardless of activity (5 minutes)
-ACTIVITY_CHECK_INTERVAL = 5  # How often to check for activity
-
 async def start(update: Update, context: CallbackContext) -> int:
-    # Clear any previous state
-    context.user_data.clear()
-    
-    keyboard = [['Python']]  # Simplified to only Python for now
+    keyboard = [['C', 'Python']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
     await update.message.reply_text(
-        'Hi! I can execute Python code and generate a PDF report of the execution.',
+        'Hi! Please select the programming language you want to use:',
         reply_markup=reply_markup
     )
     return LANGUAGE_CHOICE
@@ -60,14 +50,18 @@ async def start(update: Update, context: CallbackContext) -> int:
 async def language_choice(update: Update, context: CallbackContext) -> int:
     language = update.message.text
     
-    if language != 'Python':
-        await update.message.reply_text('Currently only Python is supported. Please select Python.')
+    if language not in ['C', 'Python']:
+        await update.message.reply_text(
+            'Please select either C or Python using the keyboard buttons.'
+        )
         return LANGUAGE_CHOICE
     
     context.user_data['language'] = language
     
     await update.message.reply_text(
-        'You selected Python. Please send me your Python code, and I will execute it.'
+        f'You selected {language}. Please send me your {language} code, and I will ' +
+        ('compile and execute' if language == 'C' else 'execute') + 
+        ' it step-by-step.'
     )
     return CODE
 
@@ -82,6 +76,7 @@ def clean_whitespace(code):
 async def handle_code(update: Update, context: CallbackContext) -> int:
     original_code = update.message.text
     code = clean_whitespace(original_code)
+    language = context.user_data.get('language', 'C')  # Default to C if not specified
     
     if code != original_code:
         await update.message.reply_text(
@@ -100,231 +95,243 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['last_prompt'] = ""
     context.user_data['pending_messages'] = []  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
-    context.user_data['title_requested'] = False  # Flag to track if title has been requested
     
-    # Initialize conversation history for PDF
-    context.user_data['conversation_history'] = []
+    if language == 'C':
+        return await handle_c_code(update, context)
+    else:  # Python
+        return await handle_python_code(update, context)
+
+async def handle_c_code(update: Update, context: CallbackContext) -> int:
+    code = context.user_data['code']
     
-    # Initialize activity monitoring
-    context.user_data['activity_stats'] = {
-        'start_time': time.time(),
-        'last_output_time': time.time(),
-        'last_activity_check': time.time(),
-        'output_count': 0,
-        'idle_time': 0,
-        'warnings_sent': 0,
-        'is_active': True
-    }
+    # Store the printf statements from the code for later analysis
+    printf_patterns = extract_printf_statements(code)
+    context.user_data['printf_patterns'] = printf_patterns
     
-    # Check for syntax errors
-    with open("temp.py", "w") as file:
-        file.write(code)
+    logger.info(f"Extracted printf patterns: {printf_patterns}")
     
-    syntax_check = subprocess.run(
-        ["python3", "-m", "py_compile", "temp.py"], 
-        capture_output=True, 
-        text=True
-    )
+    try:
+        with open("temp.c", "w") as file:
+            file.write(code)
+        
+        compile_result = subprocess.run(["gcc", "temp.c", "-o", "temp"], capture_output=True, text=True)
+        
+        if compile_result.returncode == 0:
+            context.user_data['execution_log'].append({
+                'type': 'system',
+                'message': 'Code compiled successfully!',
+                'timestamp': datetime.datetime.now()
+            })
+            
+            process = await asyncio.create_subprocess_exec(
+                "stdbuf", "-o0", "./temp",
+                stdin=PIPE,
+                stdout=PIPE,
+                stderr=PIPE
+            )
+            
+            context.user_data['process'] = process
+            await update.message.reply_text("Code compiled successfully! Running now...")
+            
+            asyncio.create_task(read_process_output(update, context))
+            return RUNNING
+        else:
+            if "stray" in compile_result.stderr and "\\302" in compile_result.stderr:
+                code = re.sub(r'[^\x00-\x7F]+', ' ', code)
+                
+                with open("temp.c", "w") as file:
+                    file.write(code)
+                
+                compile_result = subprocess.run(["gcc", "temp.c", "-o", "temp"], capture_output=True, text=True)
+                
+                if compile_result.returncode == 0:
+                    context.user_data['execution_log'].append({
+                        'type': 'system',
+                        'message': 'Code compiled successfully after aggressive whitespace cleaning!',
+                        'timestamp': datetime.datetime.now()
+                    })
+                    
+                    process = await asyncio.create_subprocess_exec(
+                        "stdbuf", "-o0", "./temp",
+                        stdin=PIPE,
+                        stdout=PIPE,
+                        stderr=PIPE
+                    )
+                    
+                    context.user_data['process'] = process
+                    await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
+                    
+                    asyncio.create_task(read_process_output(update, context))
+                    return RUNNING
+            
+            context.user_data['execution_log'].append({
+                'type': 'error',
+                'message': f"Compilation Error:\n{compile_result.stderr}",
+                'timestamp': datetime.datetime.now()
+            })
+            
+            if "stray" in compile_result.stderr and ("\\302" in compile_result.stderr or "\\240" in compile_result.stderr):
+                await update.message.reply_text(
+                    f"Compilation Error (non-standard whitespace characters):\n{compile_result.stderr}\n\n"
+                    f"Your code contains invisible non-standard whitespace characters that the compiler cannot process. "
+                    f"Try retyping the code in a plain text editor or use a code editor like VS Code."
+                )
+            else:
+                await update.message.reply_text(f"Compilation Error:\n{compile_result.stderr}")
+            
+            return ConversationHandler.END
+    except Exception as e:
+        await update.message.reply_text(f"An error occurred: {str(e)}")
+        return ConversationHandler.END
+
+async def handle_python_code(update: Update, context: CallbackContext) -> int:
+    code = context.user_data['code']
     
-    if syntax_check.returncode != 0:
+    # Store the input statements from the code for later analysis
+    input_patterns = extract_input_statements(code)
+    context.user_data['input_patterns'] = input_patterns
+    
+    logger.info(f"Extracted input patterns: {input_patterns}")
+    
+    try:
+        # First, check for syntax errors
+        syntax_check = subprocess.run(
+            ["python3", "-m", "py_compile"], 
+            input=code.encode(), 
+            capture_output=True, 
+            text=True
+        )
+        
+        if syntax_check.returncode != 0:
+            context.user_data['execution_log'].append({
+                'type': 'error',
+                'message': f"Python Syntax Error:\n{syntax_check.stderr}",
+                'timestamp': datetime.datetime.now()
+            })
+            
+            await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
+            return ConversationHandler.END
+        
+        # Create a temporary Python executor file if it doesn't exist
+        executor_path = os.path.join(os.getcwd(), "python_executor.py")
+        if not os.path.exists(executor_path):
+            with open(executor_path, "w") as file:
+                file.write("""
+import sys
+import subprocess
+import os
+import tempfile
+
+def main():
+    # Create a temporary file for the Python code
+    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as temp_file:
+        temp_filename = temp_file.name
+        
+        # Get the Python code from stdin
+        python_code = sys.stdin.read()
+        
+        # Write the code to the temporary file
+        temp_file.write(python_code.encode('utf-8'))
+    
+    try:
+        # Execute the Python code in a separate process
+        result = subprocess.run(
+            ["python3", "-u", temp_filename],
+            capture_output=False,
+            text=True,
+            check=False
+        )
+        
+        # Return the exit code
+        sys.exit(result.returncode)
+    
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+
+if __name__ == "__main__":
+    main()
+                """)
+        
+        # Save the code to a temporary file
+        with open("temp.py", "w") as file:
+            file.write(code)
+        
         context.user_data['execution_log'].append({
-            'type': 'error',
-            'message': f"Python Syntax Error:\n{syntax_check.stderr}",
+            'type': 'system',
+            'message': 'Python code validation successful!',
             'timestamp': datetime.datetime.now()
         })
         
-        await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
-        return ConversationHandler.END
-    
-    context.user_data['execution_log'].append({
-        'type': 'system',
-        'message': 'Python code validation successful!',
-        'timestamp': datetime.datetime.now()
-    })
-    
-    # Add to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'system',
-        'message': 'Python code validation successful! Ready to execute.',
-        'timestamp': datetime.datetime.now()
-    })
-    
-    # Extract input patterns for later use
-    input_patterns = extract_input_statements(code)
-    context.user_data['input_patterns'] = input_patterns
-    logger.info(f"Extracted input patterns: {input_patterns}")
-    
-    await update.message.reply_text("Python code validation successful! Ready to execute.")
-    
-    # Use a simpler, more direct approach for execution
-    return await execute_python_directly(update, context)
-
-def extract_input_statements(code):
-    """Extract potential input prompt patterns from Python code."""
-    input_patterns = []
-    pattern = r'input\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
-    input_matches = re.finditer(pattern, code)
-    
-    for match in input_matches:
-        prompt_text = match.group(1)
-        prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
-        if prompt_text.strip():
-            input_patterns.append(prompt_text)
-    
-    return input_patterns
-
-async def execute_python_directly(update: Update, context: CallbackContext) -> int:
-    """Execute Python code directly with a simpler approach"""
-    try:
-        # Get the user's code
-        code = context.user_data['code']
-        
-        # Create a simple wrapper script that just runs the code
-        with open("simple_execution.py", "w") as file:
-            file.write(code)
-        
-        # Log that we're about to execute
-        logger.info("Executing Python code directly")
-        
-        # Start the process with unbuffered output
+        # Run the Python code using our executor script
+        # This approach avoids encoding issues by using files instead of direct stdin/stdout
         process = await asyncio.create_subprocess_exec(
-            "python3", "-u", "simple_execution.py",
+            "python3", "-u", executor_path,
             stdin=PIPE,
             stdout=PIPE,
             stderr=PIPE
         )
         
-        # Store the process
+        # Write the code to the executor's stdin
+        process.stdin.write(code.encode('utf-8'))
+        await process.stdin.drain()
+        process.stdin.close()  # Close stdin to signal end of input
+        
         context.user_data['process'] = process
-        context.user_data['process_pid'] = process.pid
+        await update.message.reply_text("Python code validation successful! Running now...")
         
-        # Start reading output
         asyncio.create_task(read_process_output(update, context))
-        
-        # Start the activity monitor
-        asyncio.create_task(monitor_process_activity(update, context))
-        
-        # Return to RUNNING state to handle input
         return RUNNING
         
     except Exception as e:
-        logger.error(f"Error in execute_python_directly: {str(e)}\n{traceback.format_exc()}")
-        await update.message.reply_text(f"An error occurred during execution: {str(e)}")
+        await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
 
-async def monitor_process_activity(update: Update, context: CallbackContext):
-    """Monitor process activity to detect if it's stuck or making progress"""
-    try:
-        process = context.user_data.get('process')
-        stats = context.user_data.get('activity_stats', {})
-        
-        while process and process.returncode is None:
-            # Wait for the check interval
-            await asyncio.sleep(ACTIVITY_CHECK_INTERVAL)
-            
-            # If process has completed, exit the monitor
-            if process.returncode is not None or context.user_data.get('program_completed', False):
-                logger.info("Process completed, stopping activity monitor")
-                return
-            
-            current_time = time.time()
-            stats['last_activity_check'] = current_time
-            
-            # Calculate time since last output
-            time_since_output = current_time - stats.get('last_output_time', current_time)
-            
-            # Check if we're waiting for input - if so, we're not idle
-            if context.user_data.get('waiting_for_input', False):
-                logger.info("Program is waiting for input, resetting idle time")
-                stats['idle_time'] = 0
-                continue
-            
-            # If we haven't seen output in a while, increment idle time
-            if time_since_output > ACTIVITY_CHECK_INTERVAL:
-                stats['idle_time'] += ACTIVITY_CHECK_INTERVAL
-                logger.info(f"No recent output, idle time: {stats['idle_time']} seconds")
-                
-                # Check if we've been idle too long
-                if stats['idle_time'] >= DEFAULT_IDLE_TIMEOUT:
-                    # If we haven't sent many warnings yet, send one and extend timeout
-                    if stats['warnings_sent'] < 2:
-                        stats['warnings_sent'] += 1
-                        await update.message.reply_text(
-                            f"⚠️ Your program has been idle for {stats['idle_time']} seconds. "
-                            f"It will be terminated soon if no activity is detected."
-                        )
-                        # Give it some more time after the warning
-                        stats['idle_time'] = DEFAULT_IDLE_TIMEOUT * 0.7
-                    else:
-                        # We've sent enough warnings, terminate the process
-                        logger.warning(f"Process idle timeout after {stats['idle_time']} seconds")
-                        await update.message.reply_text(
-                            f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
-                        )
-                        
-                        # Add to conversation history
-                        context.user_data['conversation_history'].append({
-                            'role': 'system',
-                            'message': f"Program execution terminated after {stats['idle_time']} seconds of inactivity.",
-                            'timestamp': datetime.datetime.now()
-                        })
-                        
-                        try:
-                            process.terminate()
-                            await asyncio.sleep(0.5)
-                            if process.returncode is None:
-                                process.kill()
-                        except Exception as e:
-                            logger.error(f"Error terminating idle process: {e}")
-                        
-                        # Mark program as completed
-                        context.user_data['program_completed'] = True
-                        
-                        # Ask for title only if not already requested
-                        if not context.user_data.get('title_requested', False):
-                            context.user_data['title_requested'] = True
-                            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-                        
-                        return TITLE_INPUT
-            
-            # Check total runtime
-            total_runtime = current_time - stats.get('start_time', current_time)
-            if total_runtime >= DEFAULT_MAX_RUNTIME:
-                logger.warning(f"Process max runtime exceeded: {total_runtime} seconds")
-                await update.message.reply_text(
-                    f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
-                )
-                
-                # Add to conversation history
-                context.user_data['conversation_history'].append({
-                    'role': 'system',
-                    'message': f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds.",
-                    'timestamp': datetime.datetime.now()
-                })
-                
-                try:
-                    process.terminate()
-                    await asyncio.sleep(0.5)
-                    if process.returncode is None:
-                        process.kill()
-                except Exception as e:
-                    logger.error(f"Error terminating long-running process: {e}")
-                
-                # Mark program as completed
-                context.user_data['program_completed'] = True
-                
-                # Ask for title only if not already requested
-                if not context.user_data.get('title_requested', False):
-                    context.user_data['title_requested'] = True
-                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-                
-                return TITLE_INPUT
-            
-            # Update the stats in context
-            context.user_data['activity_stats'] = stats
+def extract_printf_statements(code):
+    """Extract potential printf prompt patterns from C code."""
+    # Look for printf statements that might be prompts
+    printf_patterns = []
     
-    except Exception as e:
-        logger.error(f"Error in monitor_process_activity: {str(e)}\n{traceback.format_exc()}")
+    # More comprehensive regex to find printf statements with format specifiers
+    # This will match printf("Some text: ") as well as printf("Value %d: ", var)
+    pattern = r'printf\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
+    printf_matches = re.finditer(pattern, code)
+    
+    for match in printf_matches:
+        prompt_text = match.group(1)
+        # Clean escape sequences
+        prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
+        
+        # Replace format specifiers with placeholder
+        prompt_text = re.sub(r'%[diouxXfFeEgGaAcspn]', '...', prompt_text)
+        
+        # Only add non-empty prompts
+        if prompt_text.strip():
+            printf_patterns.append(prompt_text)
+    
+    return printf_patterns
+
+def extract_input_statements(code):
+    """Extract potential input prompt patterns from Python code."""
+    # Look for input statements that might be prompts
+    input_patterns = []
+    
+    # Regex to find input statements with string literals
+    # This will match input("Some text: ") patterns
+    pattern = r'input\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
+    input_matches = re.finditer(pattern, code)
+    
+    for match in input_matches:
+        prompt_text = match.group(1)
+        # Clean escape sequences
+        prompt_text = prompt_text.replace('\\n', '').replace('\\t', '')
+        
+        # Only add non-empty prompts
+        if prompt_text.strip():
+            input_patterns.append(prompt_text)
+    
+    return input_patterns
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -333,22 +340,34 @@ async def read_process_output(update: Update, context: CallbackContext):
     execution_log = context.user_data['execution_log']
     output_buffer = context.user_data['output_buffer']
     terminal_log = context.user_data['terminal_log']
-    stats = context.user_data.get('activity_stats', {})
+    language = context.user_data.get('language', 'C')
     
     output_seen = False
     read_size = 1024
+    timeout_counter = 0
     
     # Add a flag to track if we're currently sending input
     context.user_data['is_sending_input'] = False
     
-    try:
-        while True:
-            # If we're currently sending input, wait a bit to ensure proper message order
-            if context.user_data.get('is_sending_input', False):
-                await asyncio.sleep(0.2)
-                continue
-                
-            # Check if process has completed
+    while True:
+        # If we're currently sending input, wait a bit to ensure proper message order
+        if context.user_data.get('is_sending_input', False):
+            await asyncio.sleep(0.2)
+            continue
+            
+        stdout_task = asyncio.create_task(process.stdout.read(read_size))
+        stderr_task = asyncio.create_task(process.stderr.read(read_size))
+        
+        done, pending = await asyncio.wait(
+            [stdout_task, stderr_task],
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=0.3  # Reduced timeout to check more frequently
+        )
+
+        if not done:
+            for task in pending:
+                task.cancel()
+            
             if process.returncode is not None:
                 if output_buffer:
                     process_output_chunk(context, output_buffer, update)
@@ -368,137 +387,117 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     
-                    # Add to conversation history
-                    context.user_data['conversation_history'].append({
-                        'role': 'system',
-                        'message': 'Program execution completed.',
-                        'timestamp': datetime.datetime.now()
-                    })
-                    
                     context.user_data['program_completed'] = True
                     
                     # Send the completion message and wait for it to be sent
                     await update.message.reply_text("Program execution completed.")
                     
-                    # Ask for title only if not already requested
-                    if not context.user_data.get('title_requested', False):
-                        context.user_data['title_requested'] = True
-                        # Wait a bit more before asking for title
-                        await asyncio.sleep(0.8)
-                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                    # Wait a bit more before asking for title
+                    await asyncio.sleep(0.8)
                     
+                    await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
                     return TITLE_INPUT
                 else:
                     # We're already finishing, just wait
                     await asyncio.sleep(0.1)
                     continue
             
-            stdout_task = asyncio.create_task(process.stdout.read(read_size))
-            stderr_task = asyncio.create_task(process.stderr.read(read_size))
-            
-            done, pending = await asyncio.wait(
-                [stdout_task, stderr_task],
-                return_when=asyncio.FIRST_COMPLETED,
-                timeout=0.3  # Reduced timeout to check more frequently
-            )
-
-            if not done:
-                for task in pending:
-                    task.cancel()
-                
-                # If no output and we've seen output before, check if we might be waiting for input
-                if output_seen and output_buffer:
+            # If we've seen output and there's been no new output for a while,
+            # check if we might be waiting for input
+            timeout_counter += 1
+            if output_seen and timeout_counter >= 3 and not context.user_data.get('waiting_for_input', False):
+                if output_buffer:
                     # Process any remaining output in the buffer
                     # This is crucial for detecting prompts without newlines
                     new_buffer = process_output_chunk(context, output_buffer, update)
                     output_buffer = new_buffer
                     context.user_data['output_buffer'] = new_buffer
                 
-                await asyncio.sleep(0.1)
-                continue
-
-            # Reset idle time when we get output
-            if done:
-                stats['last_output_time'] = time.time()
-                stats['idle_time'] = 0
-                context.user_data['activity_stats'] = stats
+                # If we're still not waiting for input after processing the buffer,
+                # and there's been no output for a while, assume we're waiting
+                if not context.user_data.get('waiting_for_input', False) and timeout_counter >= 5:
+                    context.user_data['waiting_for_input'] = True
+                    
+                    # Get the last detected prompt
+                    last_prompt = context.user_data.get('last_prompt', "unknown")
+                    
+                    input_message = f"Program is waiting for input: \"{last_prompt}\"\nPlease provide input (or type 'done' to finish):"
+                    
+                    execution_log.append({
+                        'type': 'system',
+                        'message': input_message,
+                        'timestamp': datetime.datetime.now()
+                    })
+                    await update.message.reply_text(input_message)
             
-            if stdout_task in done:
-                stdout_chunk = await stdout_task
-                if stdout_chunk:
-                    decoded_chunk = stdout_chunk.decode()
-                    output_seen = True
-                    
-                    terminal_log.append(decoded_chunk)
-                    
-                    output_buffer += decoded_chunk
-                    context.user_data['output_buffer'] = output_buffer
-                    
-                    output_buffer = process_output_chunk(context, output_buffer, update)
-                    context.user_data['output_buffer'] = output_buffer
-                    
-                    # Update activity stats
-                    stats['output_count'] += 1
-                    stats['last_output_time'] = time.time()
-                    stats['idle_time'] = 0
-                    context.user_data['activity_stats'] = stats
+            continue
 
-            if stderr_task in done:
-                stderr_chunk = await stderr_task
-                if stderr_chunk:
-                    decoded_chunk = stderr_chunk.decode()
-                    
-                    for line in decoded_chunk.splitlines(True):
-                        errors.append(line.strip())
-                        
-                        execution_log.append({
-                            'type': 'error',
-                            'message': line.strip(),
-                            'timestamp': datetime.datetime.now(),
-                            'raw': line
-                        })
-                        
-                        # Add to conversation history
-                        context.user_data['conversation_history'].append({
-                            'role': 'system',
-                            'message': f"Error: {line.strip()}",
-                            'timestamp': datetime.datetime.now()
-                        })
-                        
-                        await update.message.reply_text(f"Error: {line.strip()}")
-                    
-                    # Update activity stats - errors are also a form of output
-                    stats['output_count'] += 1
-                    stats['last_output_time'] = time.time()
-                    stats['idle_time'] = 0
-                    context.user_data['activity_stats'] = stats
+        # Reset timeout counter when we get output
+        timeout_counter = 0
+        
+        if stdout_task in done:
+            stdout_chunk = await stdout_task
+            if stdout_chunk:
+                decoded_chunk = stdout_chunk.decode()
+                output_seen = True
+                
+                terminal_log.append(decoded_chunk)
+                
+                output_buffer += decoded_chunk
+                context.user_data['output_buffer'] = output_buffer
+                
+                output_buffer = process_output_chunk(context, output_buffer, update)
+                context.user_data['output_buffer'] = output_buffer
 
-            for task in pending:
-                task.cancel()
-    
-    except Exception as e:
-        logger.error(f"Error in read_process_output: {str(e)}\n{traceback.format_exc()}")
-        try:
-            await update.message.reply_text(f"Error monitoring program output: {str(e)}")
+        if stderr_task in done:
+            stderr_chunk = await stderr_task
+            if stderr_chunk:
+                decoded_chunk = stderr_chunk.decode()
+                
+                for line in decoded_chunk.splitlines(True):
+                    errors.append(line.strip())
+                    
+                    execution_log.append({
+                        'type': 'error',
+                        'message': line.strip(),
+                        'timestamp': datetime.datetime.now(),
+                        'raw': line
+                    })
+                    
+                    await update.message.reply_text(f"Error: {line.strip()}")
+
+        for task in pending:
+            task.cancel()
+
+        # Check if process has completed
+        if process.returncode is not None and not context.user_data.get('finishing_initiated', False):
+            if output_buffer:
+                process_output_chunk(context, output_buffer, update)
+                output_buffer = ""
+                context.user_data['output_buffer'] = ""
             
-            # Add to conversation history
-            context.user_data['conversation_history'].append({
-                'role': 'system',
-                'message': f"Error monitoring program output: {str(e)}",
+            # Mark that we've started the finishing sequence
+            context.user_data['finishing_initiated'] = True
+            
+            # Add a significant delay to ensure all messages have been sent and processed
+            await asyncio.sleep(1.5)
+            
+            execution_log.append({
+                'type': 'system',
+                'message': 'Program execution completed.',
                 'timestamp': datetime.datetime.now()
             })
             
-            # Ask for title only if not already requested
-            if not context.user_data.get('title_requested', False):
-                context.user_data['title_requested'] = True
-                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-            
             context.user_data['program_completed'] = True
             
+            # Send completion message and wait for it to be sent
+            await update.message.reply_text("Program execution completed.")
+            
+            # Wait a bit more before asking for title
+            await asyncio.sleep(0.8)
+            
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
             return TITLE_INPUT
-        except Exception as inner_e:
-            logger.error(f"Error sending error message: {inner_e}")
-            return RUNNING
 
 async def process_output_message(update, message, prefix=""):
     """Helper function to send output messages with better ordering control"""
@@ -511,12 +510,17 @@ def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace with improved prompt detection."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    patterns = context.user_data.get('input_patterns', [])
-    stats = context.user_data.get('activity_stats', {})
+    language = context.user_data.get('language', 'C')
+    
+    # Get the appropriate patterns based on language
+    if language == 'C':
+        patterns = context.user_data.get('printf_patterns', [])
+    else:  # Python
+        patterns = context.user_data.get('input_patterns', [])
     
     # First check if the entire buffer might be a prompt without a newline
     if buffer and not buffer.endswith('\n'):
-        is_prompt, prompt_text = detect_prompt(buffer, patterns)
+        is_prompt, prompt_text = detect_prompt(buffer, patterns, language)
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
             
@@ -528,24 +532,10 @@ def process_output_chunk(context, buffer, update):
             }
             
             execution_log.append(log_entry)
-            
-            # Add to conversation history
-            context.user_data['conversation_history'].append({
-                'role': 'program',
-                'message': f"Program prompt: {buffer}",
-                'timestamp': datetime.datetime.now()
-            })
-            
             asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
             
             # We've processed the buffer as a prompt, so we can be waiting for input
             context.user_data['waiting_for_input'] = True
-            
-            # Update activity stats
-            stats['last_output_time'] = time.time()
-            stats['idle_time'] = 0
-            context.user_data['activity_stats'] = stats
-            
             return ""
     
     # Normal line-by-line processing for output with newlines
@@ -562,12 +552,11 @@ def process_output_chunk(context, buffer, update):
             output.append(line_stripped)
             
             # Enhanced prompt detection
-            is_prompt, prompt_text = detect_prompt(line_stripped, patterns)
+            is_prompt, prompt_text = detect_prompt(line_stripped, patterns, language)
             
             if is_prompt:
                 context.user_data['last_prompt'] = prompt_text
-                context.user_data['waiting_for_input'] = True
-            
+                
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
                 'message': line_stripped,
@@ -578,24 +567,11 @@ def process_output_chunk(context, buffer, update):
             execution_log.append(log_entry)
             
             prefix = "Program prompt:" if is_prompt else "Program output:"
-            
-            # Add to conversation history
-            context.user_data['conversation_history'].append({
-                'role': 'program',
-                'message': f"{prefix} {line_stripped}",
-                'timestamp': datetime.datetime.now()
-            })
-            
             asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
-            
-            # Update activity stats
-            stats['last_output_time'] = time.time()
-            stats['idle_time'] = 0
-            context.user_data['activity_stats'] = stats
     
     return new_buffer
 
-def detect_prompt(line, patterns):
+def detect_prompt(line, patterns, language):
     """Enhanced detection for prompts. Returns (is_prompt, prompt_text)"""
     line_text = line.strip()
     
@@ -645,66 +621,72 @@ def detect_prompt(line, patterns):
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
-    
+    process = context.user_data.get('process')
+    execution_log = context.user_data['execution_log']
+    terminal_log = context.user_data['terminal_log']
+    language = context.user_data.get('language', 'C')
+
     # If program is already completed, treat this as title input
     if context.user_data.get('program_completed', False):
         return await handle_title_input(update, context)
-    
-    # Check if user wants to terminate
+
+    if not process or process.returncode is not None:
+        if context.user_data.get('program_completed', False):
+            return await handle_title_input(update, context)
+        else:
+            await update.message.reply_text("Program is not running anymore.")
+            return ConversationHandler.END
+
     if user_input.lower() == 'done':
-        process = context.user_data.get('process')
-        if process and process.returncode is None:
+        execution_log.append({
+            'type': 'system',
+            'message': 'User terminated the program.',
+            'timestamp': datetime.datetime.now()
+        })
+        
+        # Properly close stdin to avoid hanging
+        try:
+            await process.stdin.drain()
+            process.stdin.close()
+        except Exception as e:
+            logger.error(f"Error closing stdin: {e}")
+        
+        # For Python programs, we may need to terminate more forcefully
+        # since they might be waiting for input in a loop
+        if language == 'Python' and process.returncode is None:
             try:
                 process.terminate()
+                # Give it a moment to terminate gracefully
                 await asyncio.sleep(0.5)
+                # If still running, force kill
                 if process.returncode is None:
                     process.kill()
             except Exception as e:
                 logger.error(f"Error terminating process: {e}")
         
-        await update.message.reply_text("Program execution terminated by user.")
+        await process.wait()
         
-        # Add to conversation history
-        context.user_data['conversation_history'].append({
-            'role': 'system',
-            'message': "Program execution terminated by user.",
-            'timestamp': datetime.datetime.now()
-        })
+        # Add delay to ensure all output is processed
+        await asyncio.sleep(1)
         
         context.user_data['program_completed'] = True
         
-        # Ask for title only if not already requested
-        if not context.user_data.get('title_requested', False):
-            context.user_data['title_requested'] = True
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-        
+        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
         return TITLE_INPUT
     
-    # Send input to the process
-    process = context.user_data.get('process')
-    if not process or process.returncode is not None:
-        await update.message.reply_text("Program is not running anymore.")
-        return ConversationHandler.END
-    
-    # Set the flag that we're sending input to prevent output processing during this time
-    context.user_data['is_sending_input'] = True
-    
-    # Add to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'user',
+    execution_log.append({
+        'type': 'input',
         'message': user_input,
         'timestamp': datetime.datetime.now()
     })
     
+    terminal_log.append(user_input + "\n")
+    
+    # Set the flag that we're sending input to prevent output processing during this time
+    context.user_data['is_sending_input'] = True
+    
     # Send the input confirmation message first and await it to ensure order
     sent_message = await update.message.reply_text(f"Input sent: {user_input}")
-    
-    # Add input confirmation to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'system',
-        'message': f"Input sent: {user_input}",
-        'timestamp': datetime.datetime.now()
-    })
     
     # Comprehensive fix for input handling that works with multiple inputs in loops
     try:
@@ -717,13 +699,11 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         # Add newline to input if not already present
         input_with_newline = user_input if user_input.endswith('\n') else user_input + '\n'
         
-        # FIX: Properly handle input encoding - check type first before encoding
+        # Convert to bytes with proper encoding
         input_bytes = None
         if isinstance(input_with_newline, bytes):
-            # Already bytes, no need to encode
             input_bytes = input_with_newline
         else:
-            # String needs to be encoded
             try:
                 input_bytes = input_with_newline.encode('utf-8')
             except UnicodeEncodeError:
@@ -738,25 +718,12 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
             # Store the input for reference
             context.user_data['inputs'].append(user_input)
             context.user_data['waiting_for_input'] = False
-            
-            # Update activity stats
-            stats = context.user_data.get('activity_stats', {})
-            stats['last_output_time'] = time.time()  # Input counts as activity
-            stats['idle_time'] = 0
-            context.user_data['activity_stats'] = stats
         else:
             raise ValueError("Failed to encode input")
             
     except Exception as e:
         logger.error(f"Input handling error: {e}")
         await update.message.reply_text(f"Error sending input: {str(e)}")
-        
-        # Add to conversation history
-        context.user_data['conversation_history'].append({
-            'role': 'system',
-            'message': f"Error sending input: {str(e)}",
-            'timestamp': datetime.datetime.now()
-        })
         
         # If we encounter a serious error, we might need to restart the process
         if "Broken pipe" in str(e) or "Connection reset" in str(e):
@@ -773,27 +740,12 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
 
 async def handle_title_input(update: Update, context: CallbackContext) -> int:
     title = update.message.text
-    
-    # Mark that we've received the title input
-    context.user_data['title_received'] = True
+    language = context.user_data.get('language', 'C')
     
     if title.lower() == 'skip':
-        context.user_data['program_title'] = "Python Program Execution Report"
+        context.user_data['program_title'] = f"{language} Program Execution Report"
     else:
         context.user_data['program_title'] = title
-    
-    # Add to conversation history
-    context.user_data['conversation_history'].append({
-        'role': 'user',
-        'message': title,
-        'timestamp': datetime.datetime.now()
-    })
-    
-    context.user_data['conversation_history'].append({
-        'role': 'system',
-        'message': f"Using title: {context.user_data['program_title']}",
-        'timestamp': datetime.datetime.now()
-    })
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
@@ -804,9 +756,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
-        program_title = context.user_data.get('program_title', "Python Program Execution Report")
-        conversation_history = context.user_data.get('conversation_history', [])
-        inputs = context.user_data.get('inputs', [])
+        language = context.user_data.get('language', 'C')
+        program_title = context.user_data.get('program_title', f"{language} Program Execution Report")
 
         # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
@@ -872,84 +823,16 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .output-content {{
                     page-break-before: avoid;
                 }}
-                .conversation-section {{
-                    margin-top: 30px;
-                    page-break-inside: avoid;
-                }}
-                .conversation-title {{
-                    font-size: 25px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    font-weight: bold;
-                    margin-top: 20px;
-                    page-break-after: avoid;
-                }}
-                .message {{
-                    margin: 10px 0;
-                    padding: 10px;
-                    border-radius: 5px;
-                }}
-                .program {{
-                    background-color: #f0f0f0;
-                    border-left: 5px solid #555;
-                }}
-                .user {{
-                    background-color: #e6f7ff;
-                    border-left: 5px solid #1890ff;
-                    font-weight: bold;
-                }}
-                .system {{
-                    background-color: #f6ffed;
-                    border-left: 5px solid #52c41a;
-                    font-style: italic;
-                }}
-                .timestamp {{
-                    font-size: 12px;
-                    color: #888;
-                    margin-top: 5px;
-                }}
-                .input-list {{
-                    margin-top: 20px;
-                    page-break-inside: avoid;
-                }}
-                .input-title {{
-                    font-size: 25px;
-                    text-decoration: underline;
-                    text-decoration-thickness: 5px;
-                    font-weight: bold;
-                    margin-top: 20px;
-                    page-break-after: avoid;
-                }}
-                .input-item {{
-                    background-color: #e6f7ff;
-                    padding: 10px;
-                    margin: 5px 0;
-                    border-radius: 5px;
-                    font-family: 'Courier New', monospace;
-                    font-weight: bold;
-                }}
             </style>
         </head>
         <body>
             <div class="page">
-                <div class="program-title">{html.escape(str(program_title))}</div>
-                <div class="language-indicator">Language: Python</div>
+                <div class="program-title">{html.escape(program_title)}</div>
+                <div class="language-indicator">Language: {language}</div>
                 <div class="code-section">
-                    <pre><code>{html.escape(str(code))}</code></pre>
+                    <pre><code>{html.escape(code)}</code></pre>
                 </div>
-                
-                <div class="conversation-section">
-                    <h1 class="conversation-title">CONVERSATION HISTORY</h1>
-                    {generate_conversation_html(conversation_history)}
-                </div>
-                
-                <div class="input-list">
-                    <h1 class="input-title">USER INPUTS</h1>
-                    {generate_inputs_html(inputs)}
-                </div>
-                
                 <div class="terminal-view">
-                    <h1 class="output-title">COMPLETE OUTPUT</h1>
                     {reconstruct_terminal_view(context)}
                 </div>
             </div>
@@ -962,108 +845,41 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
         # Generate sanitized filename from title
         # Replace invalid filename characters with underscores and ensure it ends with .pdf
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", str(program_title))
+        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", program_title)
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Check if wkhtmltopdf is installed
-        try:
-            wkhtmltopdf_check = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
-            if wkhtmltopdf_check.returncode != 0:
-                # Install wkhtmltopdf if not found
-                logger.info("wkhtmltopdf not found, installing...")
-                install_result = subprocess.run(["apt-get", "update", "-y"], capture_output=True, text=True)
-                install_result = subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], capture_output=True, text=True)
-                if install_result.returncode != 0:
-                    logger.error(f"Failed to install wkhtmltopdf: {install_result.stderr}")
-                    raise Exception("Failed to install PDF generation tool")
-        except Exception as e:
-            logger.error(f"Error checking/installing wkhtmltopdf: {str(e)}")
-            # Continue anyway, it might still work
-        
         # Generate PDF with specific options to control page breaks
-        try:
-            pdf_result = subprocess.run([
-                "wkhtmltopdf",
-                "--enable-smart-shrinking",
-                "--print-media-type",
-                "--page-size", "A4",
-                "output.html", 
-                pdf_filename
-            ], capture_output=True, text=True)
-            
-            if pdf_result.returncode != 0:
-                logger.error(f"PDF generation error: {pdf_result.stderr}")
-                raise Exception(f"Failed to generate PDF: {pdf_result.stderr}")
-            
-            logger.info(f"PDF generated successfully: {pdf_filename}")
-        except Exception as e:
-            logger.error(f"Error generating PDF: {str(e)}")
-            await update.message.reply_text(f"Error generating PDF: {str(e)}")
-            return
+        subprocess.run([
+            "wkhtmltopdf",
+            "--enable-smart-shrinking",
+            "--print-media-type",
+            "--page-size", "A4",
+            "output.html", 
+            pdf_filename
+        ])
 
         # Send PDF to user
-        try:
-            with open(pdf_filename, 'rb') as pdf_file:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=pdf_file,
-                    filename=pdf_filename,
-                    caption=f"Execution report for {program_title}"
-                )
-                if update.message:
-                    await update.message.reply_text("You can use /start to run another program or /cancel to end.")
-                else:
-                    await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="You can use /start to run another program or /cancel to end."
-                )
-        except Exception as e:
-            logger.error(f"Error sending PDF: {str(e)}")
-            await update.message.reply_text(f"Error sending PDF: {str(e)}")
+        with open(pdf_filename, 'rb') as pdf_file:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=pdf_file,
+                filename=pdf_filename,
+                caption=f"Execution report for {program_title}"
+            )
+            if update.message:
+                await update.message.reply_text("You can use /start to run another program or /cancel to end.")
+            else:
+                await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="You can use /start to run another program or /cancel to end."
+            )
     
     except Exception as e:
-        logger.error(f"Failed to generate PDF: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
 
-def generate_conversation_html(conversation_history):
-    """Generate HTML for the conversation history section"""
-    if not conversation_history:
-        return "<p>No conversation history available</p>"
-    
-    html = ""
-    for entry in conversation_history:
-        role = entry.get('role', 'system')
-        message = entry.get('message', '')
-        timestamp = entry.get('timestamp', datetime.datetime.now())
-        
-        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        
-        html += f"""
-        <div class="message {role}">
-            {html.escape(str(message))}
-            <div class="timestamp">{timestamp_str}</div>
-        </div>
-        """
-    
-    return html
-
-def generate_inputs_html(inputs):
-    """Generate HTML for the user inputs section"""
-    if not inputs:
-        return "<p>No user inputs recorded</p>"
-    
-    html = ""
-    for i, input_value in enumerate(inputs, 1):
-        html += f"""
-        <div class="input-item">
-            Input #{i}: {html.escape(str(input_value))}
-        </div>
-        """
-    
-    return html
 
 def reconstruct_terminal_view(context):
     """Render terminal output with tabs replaced by fixed spaces for PDF compatibility."""
@@ -1076,17 +892,20 @@ def reconstruct_terminal_view(context):
             raw_output += line_with_spaces if line_with_spaces.endswith('\n') else line_with_spaces + '\n'
 
         return f"""
-        <div class="output-content" style="
-            font-family: 'Courier New', monospace;
-            white-space: pre;
-            font-size: 18px;
-            line-height: 1.2;
-            background: #FFFFFF;
-            padding: 10px;
-            border-radius: 3px;
-            overflow-x: auto;
-            page-break-inside: avoid;
-        ">{html.escape(str(raw_output))}</div>
+        <div class="terminal-view" style="page-break-inside: avoid;">
+            <h1 class="output-title">OUTPUT</h1>
+            <div class="output-content" style="
+                font-family: 'Courier New', monospace;
+                white-space: pre;
+                font-size: 18px;
+                line-height: 1.2;
+                background: #FFFFFF;
+                padding: 10px;
+                border-radius: 3px;
+                overflow-x: auto;
+                page-break-inside: avoid;
+            ">{html.escape(raw_output)}</div>
+        </div>
         """
 
     return "<pre>No terminal output available</pre>"
@@ -1094,52 +913,33 @@ def reconstruct_terminal_view(context):
 async def cleanup(context: CallbackContext):
     process = context.user_data.get('process')
     if process and process.returncode is None:
-        try:
-            process.terminate()
-            # Give it a moment to terminate gracefully
-            await asyncio.sleep(0.5)
-            # If still running, force kill
-            if process.returncode is None:
-                process.kill()
-        except Exception as e:
-            logger.error(f"Error terminating process during cleanup: {e}")
-        
+        process.terminate()
         try:
             await process.wait()
         except asyncio.TimeoutError:
-            logger.error("Timeout waiting for process to terminate during cleanup")
+            process.kill()
+            await process.wait()
     
-    # Clean up temporary files
-    for file in ["temp.py", "direct_execution.py", "simple_execution.py", "output.html"]:
-        if os.path.exists(file):
-            try:
+    # Clean up temporary files based on language
+    language = context.user_data.get('language', 'C')
+    if language == 'C':
+        for file in ["temp.c", "temp", "output.html"]:
+            if os.path.exists(file):
                 os.remove(file)
-            except Exception as e:
-                logger.error(f"Error removing file {file}: {str(e)}")
+    else:  # Python
+        for file in ["temp.py", "output.html"]:
+            if os.path.exists(file):
+                os.remove(file)
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py":
-            try:
-                os.remove(file)
-            except Exception as e:
-                logger.error(f"Error removing PDF file {file}: {str(e)}")
-    
-    # Clear user data but preserve certain flags for conversation flow
-    title_requested = context.user_data.get('title_requested', False)
-    title_received = context.user_data.get('title_received', False)
-    program_completed = context.user_data.get('program_completed', False)
+        if file.endswith(".pdf") and file != "bot.py" and file != "dual_language_bot.py":
+            os.remove(file)
     
     context.user_data.clear()
-    
-    # Restore critical flags if needed for conversation flow
-    if not title_received and (title_requested or program_completed):
-        context.user_data['title_requested'] = title_requested
-        context.user_data['program_completed'] = program_completed
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled. You can use /start to begin again.")
-    await cleanup(context)
     return ConversationHandler.END
 
 def main() -> None:
@@ -1162,8 +962,12 @@ def main() -> None:
         
         logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except telegram.error.Conflict as e:
+        logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
+        print("Error: Another instance of this bot is already running. Please stop it and try again.")
+        return
     except Exception as e:
-        logger.error(f"Unexpected error: {e}\n{traceback.format_exc()}")
+        logger.error(f"Unexpected error: {e}")
         raise
 
 
