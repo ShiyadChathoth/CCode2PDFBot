@@ -259,6 +259,11 @@ async def execute_python_with_inputs(update: Update, context: CallbackContext, i
         logger.info(f"Executing Python with inputs: {inputs}")
         logger.info(f"Total inputs provided: {state['inputs_provided']}")
         
+        # Properly indent the user's code for inclusion in the template
+        user_code = context.user_data['code']
+        # Add 4 spaces of indentation to each line of the user's code
+        indented_code = "\n".join(["    " + line for line in user_code.split("\n")])
+        
         # Create a modified version of the code that includes the inputs directly
         modified_code = f"""
 import sys
@@ -312,8 +317,8 @@ captured_output = CaptureOutput()
 sys.stdout = captured_output
 
 try:
-    # Original user code begins here
-{context.user_data['code']}
+    # Original user code begins here with proper indentation
+{indented_code}
     
     # Print a special marker to indicate successful completion
     print("\\n__EXECUTION_COMPLETED_SUCCESSFULLY__")
@@ -358,7 +363,9 @@ sys.stdout = original_stdout
                 logger.info("Python execution completed successfully")
                 
                 # Clean the output by removing our debug markers
-                clean_output = output.replace("__EXECUTION_COMPLETED_SUCCESSFULLY__", "").replace("\n__DEBUG_INFO__", "")
+                clean_output = re.sub(r"\n__EXECUTION_COMPLETED_SUCCESSFULLY__.*", "", output)
+                clean_output = re.sub(r"\n__DEBUG_INFO__.*", "", clean_output)
+                clean_output = re.sub(r"\n__EXECUTION_ERROR__.*", "", clean_output)
                 
                 # Check if the program is waiting for more input
                 debug_info = re.search(r"__DEBUG_INFO__: Used (\d+) of (\d+) inputs", output)
