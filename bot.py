@@ -22,7 +22,6 @@ import unicodedata
 import sys
 import traceback
 import signal
-import psutil
 
 # Set up logging with more detailed format
 logging.basicConfig(
@@ -208,7 +207,6 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
     try:
         process = context.user_data.get('process')
         stats = context.user_data.get('activity_stats', {})
-        pid = context.user_data.get('process_pid')
         
         while process and process.returncode is None:
             # Wait for the check interval
@@ -230,24 +228,6 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                 logger.info("Program is waiting for input, resetting idle time")
                 stats['idle_time'] = 0
                 continue
-            
-            # Try to get process stats using psutil
-            try:
-                if pid and psutil.pid_exists(pid):
-                    proc = psutil.Process(pid)
-                    cpu_percent = proc.cpu_percent(interval=0.1)
-                    memory_info = proc.memory_info()
-                    
-                    logger.info(f"Process stats - CPU: {cpu_percent}%, Memory: {memory_info.rss / 1024 / 1024:.2f} MB")
-                    
-                    # If CPU usage is significant, the process is active
-                    if cpu_percent > 1.0:
-                        logger.info(f"Process is active (CPU: {cpu_percent}%)")
-                        stats['idle_time'] = 0
-                        stats['is_active'] = True
-                        continue
-            except (psutil.NoSuchProcess, psutil.AccessDenied, Exception) as e:
-                logger.warning(f"Could not get process stats: {e}")
             
             # If we haven't seen output in a while, increment idle time
             if time_since_output > ACTIVITY_CHECK_INTERVAL:
@@ -933,7 +913,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "smart_timeout_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "no_psutil_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
@@ -958,14 +938,6 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 
 def main() -> None:
     try:
-        # Install psutil if not already installed
-        try:
-            import psutil
-        except ImportError:
-            logger.info("Installing psutil package...")
-            subprocess.run([sys.executable, "-m", "pip", "install", "psutil"], check=True)
-            import psutil
-        
         application = Application.builder().token(TOKEN).build()
         
         conv_handler = ConversationHandler(
