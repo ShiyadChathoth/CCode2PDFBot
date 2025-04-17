@@ -416,7 +416,19 @@ async def read_process_output(update: Update, context: CallbackContext):
                 
             # Check if process has completed
             if process.returncode is not None:
-                if output_buffer:
+                # 🕒 Give time for last print statements to flush
+                await asyncio.sleep(0.5)
+
+                 # ✅ Try to read remaining output from the process
+                try:
+                    remaining_output = await process.stdout.read()
+                    if remaining_output:
+                        output_buffer += remaining_output.decode()
+                except:
+                    pass
+                    
+                # ✅ Process remaining output
+                if output_buffer.strip():
                     process_output_chunk(context, output_buffer, update)
                     output_buffer = ""
                     context.user_data['output_buffer'] = ""
