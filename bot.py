@@ -699,11 +699,13 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         # Add newline to input if not already present
         input_with_newline = user_input if user_input.endswith('\n') else user_input + '\n'
         
-        # Convert to bytes with proper encoding
+        # FIX: Properly handle input encoding - check type first before encoding
         input_bytes = None
         if isinstance(input_with_newline, bytes):
+            # Already bytes, no need to encode
             input_bytes = input_with_newline
         else:
+            # String needs to be encoded
             try:
                 input_bytes = input_with_newline.encode('utf-8')
             except UnicodeEncodeError:
