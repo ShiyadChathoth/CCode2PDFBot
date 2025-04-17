@@ -417,12 +417,15 @@ async def ensure_all_prompts_captured(context):
         
         # Check if there's a last prompt that needs to be captured
         last_prompt = context.user_data.get('last_prompt', '')
-        if last_prompt and last_prompt not in existing_prompts and last_prompt not in all_prompts:
-            logger.info(f"Adding last prompt to terminal simulation: {last_prompt}")
-            context.user_data['terminal_simulation'].append({
-                'type': 'prompt',
-                'content': last_prompt
-            })
+        if last_prompt:
+            existing_prompts_lower = [p.lower().strip() for p in existing_prompts]
+            if last_prompt.lower().strip() not in existing_prompts_lower:
+                logger.info(f"Adding last prompt to terminal simulation: {last_prompt}")
+                context.user_data['terminal_simulation'].append({
+                    'type': 'prompt',
+                    'content': last_prompt
+                })
+                
     except Exception as e:
         logger.error(f"Error ensuring all prompts are captured: {str(e)}")
 
