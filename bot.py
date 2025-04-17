@@ -195,9 +195,11 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
     
     try:
         # First, check for syntax errors
+        with open("temp.py", "w") as file:
+            file.write(code)
+        
         syntax_check = subprocess.run(
-            ["python3", "-m", "py_compile"], 
-            input=code.encode(), 
+            ["python3", "-m", "py_compile", "temp.py"], 
             capture_output=True, 
             text=True
         )
@@ -212,51 +214,46 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
             return ConversationHandler.END
         
-        # Create a temporary Python executor file if it doesn't exist
-        executor_path = os.path.join(os.getcwd(), "python_executor.py")
-        if not os.path.exists(executor_path):
-            with open(executor_path, "w") as file:
-                file.write("""
+        # Create a modified version of the code that replaces input() with a custom function
+        modified_code = """
 import sys
-import subprocess
-import os
-import tempfile
+import builtins
 
-def main():
-    # Create a temporary file for the Python code
-    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as temp_file:
-        temp_filename = temp_file.name
-        
-        # Get the Python code from stdin
-        python_code = sys.stdin.read()
-        
-        # Write the code to the temporary file
-        temp_file.write(python_code.encode('utf-8'))
-    
-    try:
-        # Execute the Python code in a separate process
-        result = subprocess.run(
-            ["python3", "-u", temp_filename],
-            capture_output=False,
-            text=True,
-            check=False
-        )
-        
-        # Return the exit code
-        sys.exit(result.returncode)
-    
-    finally:
-        # Clean up the temporary file
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+# Store original input function
+original_input = builtins.input
 
-if __name__ == "__main__":
-    main()
-                """)
+# Input values that will be provided
+input_values = []
+input_index = 0
+
+# Override input function
+def custom_input(prompt=""):
+    global input_index
+    # Print the prompt to stdout
+    print(prompt, end="")
+    sys.stdout.flush()
+    
+    # Check if we have an input value available
+    if input_index < len(input_values):
+        value = input_values[input_index]
+        input_index += 1
+        print(value)  # Echo the input
+        return value
+    else:
+        # If no more inputs, just return empty string and print a message
+        print("\\n[No more input values available]")
+        return ""
+
+# Replace the built-in input function
+builtins.input = custom_input
+
+"""
+        # Add the user's code
+        modified_code += "\n# Original user code begins here\n" + code
         
-        # Save the code to a temporary file
-        with open("temp.py", "w") as file:
-            file.write(code)
+        # Write the modified code to a file
+        with open("modified_temp.py", "w") as file:
+            file.write(modified_code)
         
         context.user_data['execution_log'].append({
             'type': 'system',
@@ -264,29 +261,115 @@ if __name__ == "__main__":
             'timestamp': datetime.datetime.now()
         })
         
-        # Run the Python code using our executor script
-        # This approach avoids encoding issues by using files instead of direct stdin/stdout
-        process = await asyncio.create_subprocess_exec(
-            "python3", "-u", executor_path,
-            stdin=PIPE,
-            stdout=PIPE,
-            stderr=PIPE
-        )
+        # Initialize the execution state
+        context.user_data['python_execution_state'] = {
+            'inputs_provided': [],
+            'outputs': [],
+            'errors': [],
+            'waiting_for_input': False,
+            'completed': False
+        }
         
-        # Write the code to the executor's stdin
-        process.stdin.write(code.encode('utf-8'))
-        await process.stdin.drain()
-        process.stdin.close()  # Close stdin to signal end of input
+        await update.message.reply_text("Python code validation successful! Ready to execute.")
         
-        context.user_data['process'] = process
-        await update.message.reply_text("Python code validation successful! Running now...")
+        # Initial execution without any inputs
+        await execute_python_with_inputs(update, context, [])
         
-        asyncio.create_task(read_process_output(update, context))
         return RUNNING
         
     except Exception as e:
+        logger.error(f"Error in handle_python_code: {str(e)}")
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
+
+async def execute_python_with_inputs(update: Update, context: CallbackContext, inputs):
+    """Execute the Python code with the given inputs"""
+    try:
+        # Get the execution state
+        state = context.user_data.get('python_execution_state', {})
+        
+        # Update the inputs provided
+        state['inputs_provided'].extend(inputs)
+        
+        # Create a Python script that will execute the modified code with inputs
+        executor_code = f"""
+import sys
+import subprocess
+
+# The input values to provide
+input_values = {repr(state['inputs_provided'])}
+
+# Write the input values to a file that the modified code will read
+with open("input_values.py", "w") as f:
+    f.write(f"input_values = {repr(input_values)}\\n")
+
+# Execute the modified code
+result = subprocess.run(
+    ["python3", "-u", "modified_temp.py"],
+    capture_output=True,
+    text=True
+)
+
+# Print the output and errors
+print("===== STDOUT =====")
+print(result.stdout)
+print("===== STDERR =====")
+print(result.stderr)
+print("===== EXIT CODE =====")
+print(result.returncode)
+"""
+        
+        # Write the executor code to a file
+        with open("executor.py", "w") as file:
+            file.write(executor_code)
+        
+        # Execute the executor script
+        process = await asyncio.create_subprocess_exec(
+            "python3", "executor.py",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await process.communicate()
+        
+        # Process the output
+        if stdout:
+            output = stdout.decode()
+            state['outputs'].append(output)
+            
+            # Check if the program is waiting for input
+            if "Enter your guess:" in output or any(pattern in output for pattern in context.user_data.get('input_patterns', [])):
+                state['waiting_for_input'] = True
+                
+                # Extract the prompt
+                lines = output.splitlines()
+                prompt_line = next((line for line in reversed(lines) if any(pattern in line for pattern in context.user_data.get('input_patterns', []))), "")
+                
+                await update.message.reply_text(f"Program output:\n{output}\n\nProgram is waiting for input: \"{prompt_line}\"\nPlease provide input (or type 'done' to finish):")
+            else:
+                state['waiting_for_input'] = False
+                state['completed'] = True
+                await update.message.reply_text(f"Program output:\n{output}\n\nProgram execution completed.")
+                
+                # Ask for title
+                await asyncio.sleep(0.8)
+                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                return TITLE_INPUT
+        
+        if stderr:
+            error = stderr.decode()
+            state['errors'].append(error)
+            await update.message.reply_text(f"Error: {error}")
+        
+        # Update the state
+        context.user_data['python_execution_state'] = state
+        
+        return RUNNING
+        
+    except Exception as e:
+        logger.error(f"Error in execute_python_with_inputs: {str(e)}")
+        await update.message.reply_text(f"An error occurred: {str(e)}")
+        return RUNNING
 
 def extract_printf_statements(code):
     """Extract potential printf prompt patterns from C code."""
@@ -621,14 +704,36 @@ def detect_prompt(line, patterns, language):
 
 async def handle_running(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
-    process = context.user_data.get('process')
-    execution_log = context.user_data['execution_log']
-    terminal_log = context.user_data['terminal_log']
     language = context.user_data.get('language', 'C')
-
+    
     # If program is already completed, treat this as title input
     if context.user_data.get('program_completed', False):
         return await handle_title_input(update, context)
+    
+    # For Python, use our special execution method
+    if language == 'Python':
+        state = context.user_data.get('python_execution_state', {})
+        
+        # If the program is completed, treat this as title input
+        if state.get('completed', False):
+            return await handle_title_input(update, context)
+        
+        if user_input.lower() == 'done':
+            state['completed'] = True
+            context.user_data['program_completed'] = True
+            
+            await update.message.reply_text("Program execution terminated by user.")
+            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+            return TITLE_INPUT
+        
+        # Execute with the new input
+        await update.message.reply_text(f"Input sent: {user_input}")
+        return await execute_python_with_inputs(update, context, [user_input])
+    
+    # Original C code handling
+    process = context.user_data.get('process')
+    execution_log = context.user_data['execution_log']
+    terminal_log = context.user_data['terminal_log']
 
     if not process or process.returncode is not None:
         if context.user_data.get('program_completed', False):
@@ -760,6 +865,19 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         terminal_log = context.user_data['terminal_log']
         language = context.user_data.get('language', 'C')
         program_title = context.user_data.get('program_title', f"{language} Program Execution Report")
+
+        # For Python with the new execution method, reconstruct terminal log from outputs
+        if language == 'Python' and 'python_execution_state' in context.user_data:
+            state = context.user_data['python_execution_state']
+            outputs = state.get('outputs', [])
+            
+            # Clear existing terminal log and rebuild it from outputs
+            context.user_data['terminal_log'] = []
+            for output in outputs:
+                # Extract the actual program output (between STDOUT markers)
+                if "===== STDOUT =====" in output:
+                    stdout_section = output.split("===== STDOUT =====")[1].split("===== STDERR =====")[0]
+                    context.user_data['terminal_log'].append(stdout_section)
 
         # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
@@ -929,14 +1047,20 @@ async def cleanup(context: CallbackContext):
             if os.path.exists(file):
                 os.remove(file)
     else:  # Python
-        for file in ["temp.py", "output.html"]:
+        for file in ["temp.py", "modified_temp.py", "executor.py", "input_values.py", "output.html"]:
             if os.path.exists(file):
-                os.remove(file)
+                try:
+                    os.remove(file)
+                except:
+                    pass
     
     # Remove PDF files except the bot files
     for file in os.listdir():
         if file.endswith(".pdf") and file != "bot.py" and file != "dual_language_bot.py":
-            os.remove(file)
+            try:
+                os.remove(file)
+            except:
+                pass
     
     context.user_data.clear()
 
