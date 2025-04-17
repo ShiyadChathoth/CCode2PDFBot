@@ -108,6 +108,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['pending_messages'] = []  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
+    context.user_data['all_prompts'] = []  # Track all prompts for final capture
     
     # Initialize terminal simulation for PDF
     context.user_data['terminal_simulation'] = []
@@ -277,6 +278,10 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
                     else:
                         # We've sent enough warnings, terminate the process
                         logger.warning(f"Process idle timeout after {stats['idle_time']} seconds")
+                        
+                        # Check if there's a last prompt that needs to be captured
+                        await ensure_all_prompts_captured(context)
+                        
                         await update.message.reply_text(
                             f"Program execution terminated after {stats['idle_time']} seconds of inactivity."
                         )
@@ -309,6 +314,10 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
             total_runtime = current_time - stats.get('start_time', current_time)
             if total_runtime >= DEFAULT_MAX_RUNTIME:
                 logger.warning(f"Process max runtime exceeded: {total_runtime} seconds")
+                
+                # Check if there's a last prompt that needs to be captured
+                await ensure_all_prompts_captured(context)
+                
                 await update.message.reply_text(
                     f"Program execution terminated after reaching the maximum runtime of {DEFAULT_MAX_RUNTIME} seconds."
                 )
@@ -342,6 +351,40 @@ async def monitor_process_activity(update: Update, context: CallbackContext):
     
     except Exception as e:
         logger.error(f"Error in monitor_process_activity: {str(e)}\n{traceback.format_exc()}")
+
+async def ensure_all_prompts_captured(context):
+    """Ensure all detected prompts are captured in the terminal simulation"""
+    try:
+        # Get all prompts and the terminal simulation
+        all_prompts = context.user_data.get('all_prompts', [])
+        terminal_simulation = context.user_data.get('terminal_simulation', [])
+        
+        # Get all prompt content already in the terminal simulation
+        existing_prompts = [
+            entry.get('content', '') 
+            for entry in terminal_simulation 
+            if entry.get('type') == 'prompt'
+        ]
+        
+        # Add any missing prompts to the terminal simulation
+        for prompt in all_prompts:
+            if prompt not in existing_prompts:
+                logger.info(f"Adding missing prompt to terminal simulation: {prompt}")
+                context.user_data['terminal_simulation'].append({
+                    'type': 'prompt',
+                    'content': prompt
+                })
+        
+        # Check if there's a last prompt that needs to be captured
+        last_prompt = context.user_data.get('last_prompt', '')
+        if last_prompt and last_prompt not in existing_prompts and last_prompt not in all_prompts:
+            logger.info(f"Adding last prompt to terminal simulation: {last_prompt}")
+            context.user_data['terminal_simulation'].append({
+                'type': 'prompt',
+                'content': last_prompt
+            })
+    except Exception as e:
+        logger.error(f"Error ensuring all prompts are captured: {str(e)}")
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -378,6 +421,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                     
                     # Wait a bit to ensure all output is processed
                     await asyncio.sleep(1.5)
+                    
+                    # Ensure all prompts are captured
+                    await ensure_all_prompts_captured(context)
                     
                     execution_log.append({
                         'type': 'system',
@@ -534,6 +580,12 @@ def process_output_chunk(context, buffer, update):
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
             
+            # Add to all_prompts list for final capture
+            all_prompts = context.user_data.get('all_prompts', [])
+            if prompt_text not in all_prompts:
+                all_prompts.append(prompt_text)
+                context.user_data['all_prompts'] = all_prompts
+            
             log_entry = {
                 'type': 'prompt',
                 'message': buffer,
@@ -580,6 +632,12 @@ def process_output_chunk(context, buffer, update):
             if is_prompt:
                 context.user_data['last_prompt'] = prompt_text
                 context.user_data['waiting_for_input'] = True
+                
+                # Add to all_prompts list for final capture
+                all_prompts = context.user_data.get('all_prompts', [])
+                if prompt_text not in all_prompts:
+                    all_prompts.append(prompt_text)
+                    context.user_data['all_prompts'] = all_prompts
             
             log_entry = {
                 'type': 'prompt' if is_prompt else 'output',
@@ -673,6 +731,9 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
                     process.kill()
             except Exception as e:
                 logger.error(f"Error terminating process: {e}")
+        
+        # Ensure all prompts are captured
+        await ensure_all_prompts_captured(context)
         
         await update.message.reply_text("Program execution terminated by user.")
         
@@ -789,6 +850,9 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
         'type': 'system',
         'content': f"Using title: {context.user_data['program_title']}"
     })
+    
+    # Ensure all prompts are captured before generating PDF
+    await ensure_all_prompts_captured(context)
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
@@ -997,7 +1061,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py":
             try:
                 os.remove(file)
             except Exception as e:
