@@ -123,6 +123,10 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['entry_order'] = []  # List to maintain the order of entries
     context.user_data['execution_session'] = str(time.time())  # Unique identifier for this execution session
     
+    # NEW: Track seen content to prevent exact duplicates
+    context.user_data['seen_content'] = set()  # Set of content we've already seen
+    context.user_data['content_counts'] = {}  # Count occurrences of each content
+    
     # Initialize activity monitoring
     context.user_data['activity_stats'] = {
         'start_time': time.time(),
@@ -180,6 +184,7 @@ def add_terminal_entry(context, entry_type, content, sequence=None):
     """
     Add an entry to terminal entries with guaranteed uniqueness.
     Uses a combination of entry type, content, and sequence number to create a unique key.
+    Also checks for exact duplicate content to prevent repeating the same output.
     """
     # Get the current execution session
     session = context.user_data.get('execution_session', str(time.time()))
@@ -195,6 +200,33 @@ def add_terminal_entry(context, entry_type, content, sequence=None):
     if entry_key in context.user_data.get('terminal_entries', {}):
         # If it exists, don't add it again
         return False
+    
+    # NEW: Check for exact duplicate content
+    # Only apply this check to output and prompt types, not system messages or inputs
+    if entry_type in ['output', 'prompt']:
+        # Get the set of seen content
+        seen_content = context.user_data.get('seen_content', set())
+        content_counts = context.user_data.get('content_counts', {})
+        
+        # Check if we've seen this exact content before
+        if content in seen_content:
+            # We've seen this content before, check how many times
+            count = content_counts.get(content, 0)
+            
+            # If we've seen it more than once, don't add it again
+            if count >= 1:
+                logger.info(f"Skipping exact duplicate content: {content[:50]}...")
+                return False
+            
+            # Increment the count
+            content_counts[content] = count + 1
+            context.user_data['content_counts'] = content_counts
+        else:
+            # First time seeing this content, add it to the set
+            seen_content.add(content)
+            content_counts[content] = 1
+            context.user_data['seen_content'] = seen_content
+            context.user_data['content_counts'] = content_counts
     
     # Add to terminal entries dictionary
     terminal_entries = context.user_data.get('terminal_entries', {})
@@ -560,6 +592,9 @@ async def read_process_output(update: Update, context: CallbackContext):
                     # Ensure final output is captured
                     await ensure_final_output_captured(context)
                     
+                    # NEW: Post-process the terminal entries to remove any remaining duplicates
+                    post_process_terminal_entries(context)
+                    
                     execution_log.append({
                         'type': 'system',
                         'message': 'Program execution completed.',
@@ -685,6 +720,58 @@ async def read_process_output(update: Update, context: CallbackContext):
         except Exception as inner_e:
             logger.error(f"Error sending error message: {inner_e}")
             return RUNNING
+
+def post_process_terminal_entries(context):
+    """
+    Post-process terminal entries to remove any remaining duplicates.
+    This is a final pass to ensure no duplicates make it to the PDF.
+    """
+    try:
+        # Get all terminal entries and their order
+        terminal_entries = context.user_data.get('terminal_entries', {})
+        entry_order = context.user_data.get('entry_order', [])
+        
+        if not terminal_entries or not entry_order:
+            return
+        
+        # Create a new list to store the filtered entry order
+        filtered_order = []
+        
+        # Track content we've seen to detect duplicates
+        seen_content = {}  # Map content to entry key
+        
+        # Process entries in order
+        for key in entry_order:
+            entry = terminal_entries.get(key, {})
+            if not entry:
+                continue
+                
+            entry_type = entry.get('type', '')
+            content = entry.get('content', '')
+            
+            # Skip system messages about title
+            if entry_type == 'system' and 'Using title:' in content:
+                continue
+            
+            # For output and prompt types, check for duplicates
+            if entry_type in ['output', 'prompt']:
+                # If we've seen this content before, skip it
+                if content in seen_content:
+                    # Keep the first occurrence only
+                    continue
+                
+                # First time seeing this content, add it to seen_content
+                seen_content[content] = key
+            
+            # Add this entry to the filtered order
+            filtered_order.append(key)
+        
+        # Update the entry order with the filtered list
+        context.user_data['entry_order'] = filtered_order
+        
+        logger.info(f"Post-processed terminal entries: removed {len(entry_order) - len(filtered_order)} duplicates")
+    except Exception as e:
+        logger.error(f"Error post-processing terminal entries: {str(e)}")
 
 async def process_output_message(update, message, prefix=""):
     """Helper function to send output messages with better ordering control"""
@@ -877,6 +964,9 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         # Ensure final output is captured
         await ensure_final_output_captured(context)
         
+        # Post-process the terminal entries to remove any remaining duplicates
+        post_process_terminal_entries(context)
+        
         await update.message.reply_text("Program execution terminated by user.")
         
         # Add to terminal entries
@@ -986,6 +1076,9 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     
     # Ensure final output is captured
     await ensure_final_output_captured(context)
+    
+    # Post-process the terminal entries to remove any remaining duplicates
+    post_process_terminal_entries(context)
     
     await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
     await generate_and_send_pdf(update, context)
@@ -1154,23 +1247,18 @@ def generate_terminal_html(terminal_entries, entry_order):
     
     html = ""
     
-    # Filter out any system messages about title at the end
-    filtered_order = []
+    # Process entries in order
     for key in entry_order:
-        entry = terminal_entries.get(key, {})
-        content = entry.get('content', '')
-        if entry.get('type') == 'system' and 'Using title:' in content:
-            continue
-        filtered_order.append(key)
-    
-    # Generate HTML from entries in order
-    for key in filtered_order:
         entry = terminal_entries.get(key, {})
         if not entry:
             continue
             
-        entry_type = entry.get('type', 'output')
+        entry_type = entry.get('type', '')
         content = entry.get('content', '')
+        
+        # Skip system messages about title
+        if entry_type == 'system' and 'Using title:' in content:
+            continue
         
         if entry_type == 'prompt':
             html += f"<span class='prompt'>{escape_html(content)}</span>\n"
@@ -1213,7 +1301,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py" and file != "fixed_duplicate_bot.py" and file != "final_working_bot.py":
+        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py" and file != "fixed_duplicate_bot.py" and file != "final_working_bot.py" and file != "final_solution.py":
             try:
                 os.remove(file)
             except Exception as e:
