@@ -212,6 +212,48 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
             return ConversationHandler.END
         
+        # Create a temporary Python executor file if it doesn't exist
+        executor_path = os.path.join(os.getcwd(), "python_executor.py")
+        if not os.path.exists(executor_path):
+            with open(executor_path, "w") as file:
+                file.write("""
+import sys
+import subprocess
+import os
+import tempfile
+
+def main():
+    # Create a temporary file for the Python code
+    with tempfile.NamedTemporaryFile(suffix='.py', delete=False) as temp_file:
+        temp_filename = temp_file.name
+        
+        # Get the Python code from stdin
+        python_code = sys.stdin.read()
+        
+        # Write the code to the temporary file
+        temp_file.write(python_code.encode('utf-8'))
+    
+    try:
+        # Execute the Python code in a separate process
+        result = subprocess.run(
+            ["python3", "-u", temp_filename],
+            capture_output=False,
+            text=True,
+            check=False
+        )
+        
+        # Return the exit code
+        sys.exit(result.returncode)
+    
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+
+if __name__ == "__main__":
+    main()
+                """)
+        
         # Save the code to a temporary file
         with open("temp.py", "w") as file:
             file.write(code)
@@ -222,14 +264,19 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
             'timestamp': datetime.datetime.now()
         })
         
-        # Run the Python code with unbuffered output
-        # Use -u flag to ensure unbuffered I/O which is critical for interactive programs
+        # Run the Python code using our executor script
+        # This approach avoids encoding issues by using files instead of direct stdin/stdout
         process = await asyncio.create_subprocess_exec(
-            "python3", "-u", "temp.py",
+            "python3", "-u", executor_path,
             stdin=PIPE,
             stdout=PIPE,
             stderr=PIPE
         )
+        
+        # Write the code to the executor's stdin
+        process.stdin.write(code.encode('utf-8'))
+        await process.stdin.drain()
+        process.stdin.close()  # Close stdin to signal end of input
         
         context.user_data['process'] = process
         await update.message.reply_text("Python code validation successful! Running now...")
