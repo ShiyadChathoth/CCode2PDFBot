@@ -214,57 +214,6 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
             return ConversationHandler.END
         
-        # Create a modified version of the code that replaces input() with a custom function
-        modified_code = """
-import sys
-import builtins
-import os
-
-# Initialize input_values
-input_values = []
-
-# Try to load input values if the file exists
-try:
-    if os.path.exists("input_values.py"):
-        from input_values import input_values
-except Exception as e:
-    print(f"Warning: Could not load input values: {e}")
-    input_values = []
-
-input_index = 0
-
-# Store original input function
-original_input = builtins.input
-
-# Override input function
-def custom_input(prompt=""):
-    global input_index
-    # Print the prompt to stdout
-    print(prompt, end="")
-    sys.stdout.flush()
-    
-    # Check if we have an input value available
-    if input_index < len(input_values):
-        value = input_values[input_index]
-        input_index += 1
-        print(value)  # Echo the input
-        return value
-    else:
-        # If no more inputs, just return empty string and print a message
-        print("\\n[No more input values available]")
-        return ""
-
-# Replace the built-in input function
-builtins.input = custom_input
-
-"""
-        # Add the user's code
-        modified_code += "\n# Original user code begins here\n" + code
-        
-        # Write the modified code to a file
-        with open("modified_temp.py", "w") as file:
-            file.write(modified_code)
-        
         context.user_data['execution_log'].append({
             'type': 'system',
             'message': 'Python code validation successful!',
@@ -293,7 +242,7 @@ builtins.input = custom_input
         return ConversationHandler.END
 
 async def execute_python_with_inputs(update: Update, context: CallbackContext, inputs):
-    """Execute the Python code with the given inputs"""
+    """Execute the Python code with the given inputs using a direct approach"""
     try:
         # Get the execution state
         state = context.user_data.get('python_execution_state', {})
@@ -301,47 +250,50 @@ async def execute_python_with_inputs(update: Update, context: CallbackContext, i
         # Update the inputs provided
         state['inputs_provided'].extend(inputs)
         
-        # Create a Python script that will execute the modified code with inputs
-        executor_code = f"""
+        # Create a modified version of the code that includes the inputs directly
+        modified_code = f"""
 import sys
-import subprocess
-import os
+import builtins
 
-# The input values to provide
+# Define input values directly in the code
 input_values = {repr(state['inputs_provided'])}
+input_index = 0
 
-# Write the input values to a file that the modified code will read
-with open("input_values.py", "w") as f:
-    f.write(f"input_values = {repr(input_values)}\\n")
+# Store original input function
+original_input = builtins.input
 
-# Make sure the file exists before executing
-if not os.path.exists("input_values.py"):
-    print("Error: Failed to create input_values.py file")
-    sys.exit(1)
+# Override input function
+def custom_input(prompt=""):
+    global input_index
+    # Print the prompt to stdout
+    print(prompt, end="")
+    sys.stdout.flush()
+    
+    # Check if we have an input value available
+    if input_index < len(input_values):
+        value = input_values[input_index]
+        input_index += 1
+        print(value)  # Echo the input
+        return value
+    else:
+        # If no more inputs, just return empty string and print a message
+        print("\\n[No more input values available]")
+        return ""
 
-# Execute the modified code
-result = subprocess.run(
-    ["python3", "-u", "modified_temp.py"],
-    capture_output=True,
-    text=True
-)
+# Replace the built-in input function
+builtins.input = custom_input
 
-# Print the output and errors
-print("===== STDOUT =====")
-print(result.stdout)
-print("===== STDERR =====")
-print(result.stderr)
-print("===== EXIT CODE =====")
-print(result.returncode)
+# Original user code begins here
+{context.user_data['code']}
 """
         
-        # Write the executor code to a file
-        with open("executor.py", "w") as file:
-            file.write(executor_code)
+        # Write the modified code to a file
+        with open("direct_execution.py", "w") as file:
+            file.write(modified_code)
         
-        # Execute the executor script
+        # Execute the code directly
         process = await asyncio.create_subprocess_exec(
-            "python3", "executor.py",
+            "python3", "-u", "direct_execution.py",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -890,10 +842,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             # Clear existing terminal log and rebuild it from outputs
             context.user_data['terminal_log'] = []
             for output in outputs:
-                # Extract the actual program output (between STDOUT markers)
-                if "===== STDOUT =====" in output:
-                    stdout_section = output.split("===== STDOUT =====")[1].split("===== STDERR =====")[0]
-                    context.user_data['terminal_log'].append(stdout_section)
+                # For the direct execution approach, the output is already in the right format
+                context.user_data['terminal_log'].append(output)
 
         # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
@@ -1063,7 +1013,7 @@ async def cleanup(context: CallbackContext):
             if os.path.exists(file):
                 os.remove(file)
     else:  # Python
-        for file in ["temp.py", "modified_temp.py", "executor.py", "input_values.py", "output.html"]:
+        for file in ["temp.py", "direct_execution.py", "output.html"]:
             if os.path.exists(file):
                 try:
                     os.remove(file)
