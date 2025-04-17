@@ -20,6 +20,7 @@ import datetime
 import re
 import unicodedata
 import sys
+import traceback
 
 # Set up logging
 logging.basicConfig(
@@ -181,6 +182,7 @@ async def handle_c_code(update: Update, context: CallbackContext) -> int:
             
             return ConversationHandler.END
     except Exception as e:
+        logger.error(f"Error in handle_c_code: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
 
@@ -232,12 +234,15 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text("Python code validation successful! Ready to execute.")
         
         # Initial execution without any inputs
-        await execute_python_with_inputs(update, context, [])
+        result = await execute_python_with_inputs(update, context, [])
+        
+        # Log the result for debugging
+        logger.info(f"Initial execution result: {result}")
         
         return RUNNING
         
     except Exception as e:
-        logger.error(f"Error in handle_python_code: {str(e)}")
+        logger.error(f"Error in handle_python_code: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
 
@@ -250,10 +255,15 @@ async def execute_python_with_inputs(update: Update, context: CallbackContext, i
         # Update the inputs provided
         state['inputs_provided'].extend(inputs)
         
+        # Log the current state
+        logger.info(f"Executing Python with inputs: {inputs}")
+        logger.info(f"Total inputs provided: {state['inputs_provided']}")
+        
         # Create a modified version of the code that includes the inputs directly
         modified_code = f"""
 import sys
 import builtins
+import traceback
 
 # Define input values directly in the code
 input_values = {repr(state['inputs_provided'])}
@@ -283,13 +293,48 @@ def custom_input(prompt=""):
 # Replace the built-in input function
 builtins.input = custom_input
 
-# Original user code begins here
-{context.user_data['code']}
+# Capture all output for debugging
+original_stdout = sys.stdout
+original_stderr = sys.stderr
+
+class CaptureOutput:
+    def __init__(self):
+        self.value = ""
+    
+    def write(self, text):
+        self.value += text
+        original_stdout.write(text)
+    
+    def flush(self):
+        original_stdout.flush()
+
+captured_output = CaptureOutput()
+sys.stdout = captured_output
+
+try:
+    # Original user code begins here
+    {context.user_data['code']}
+    
+    # Print a special marker to indicate successful completion
+    print("\\n__EXECUTION_COMPLETED_SUCCESSFULLY__")
+    
+except Exception as e:
+    print(f"\\n__EXECUTION_ERROR__: {{str(e)}}")
+    traceback.print_exc()
+
+# Print the input status for debugging
+print(f"\\n__DEBUG_INFO__: Used {{input_index}} of {{len(input_values)}} inputs")
+
+# Restore stdout
+sys.stdout = original_stdout
 """
         
         # Write the modified code to a file
         with open("direct_execution.py", "w") as file:
             file.write(modified_code)
+        
+        # Log that we're about to execute
+        logger.info("About to execute Python code")
         
         # Execute the code directly
         process = await asyncio.create_subprocess_exec(
@@ -305,28 +350,74 @@ builtins.input = custom_input
             output = stdout.decode()
             state['outputs'].append(output)
             
-            # Check if the program is waiting for input
-            if "Enter your guess:" in output or any(pattern in output for pattern in context.user_data.get('input_patterns', [])):
-                state['waiting_for_input'] = True
+            # Log the raw output for debugging
+            logger.info(f"Raw Python output: {output}")
+            
+            # Check if execution completed successfully
+            if "__EXECUTION_COMPLETED_SUCCESSFULLY__" in output:
+                logger.info("Python execution completed successfully")
                 
-                # Extract the prompt
-                lines = output.splitlines()
-                prompt_line = next((line for line in reversed(lines) if any(pattern in line for pattern in context.user_data.get('input_patterns', []))), "")
+                # Clean the output by removing our debug markers
+                clean_output = output.replace("__EXECUTION_COMPLETED_SUCCESSFULLY__", "").replace("\n__DEBUG_INFO__", "")
                 
-                await update.message.reply_text(f"Program output:\n{output}\n\nProgram is waiting for input: \"{prompt_line}\"\nPlease provide input (or type 'done' to finish):")
+                # Check if the program is waiting for more input
+                debug_info = re.search(r"__DEBUG_INFO__: Used (\d+) of (\d+) inputs", output)
+                if debug_info:
+                    used_inputs = int(debug_info.group(1))
+                    total_inputs = int(debug_info.group(2))
+                    
+                    logger.info(f"Used {used_inputs} of {total_inputs} inputs")
+                    
+                    # If we've used all inputs and the program is still running, it's completed
+                    if used_inputs >= total_inputs:
+                        state['waiting_for_input'] = False
+                        state['completed'] = True
+                        await update.message.reply_text(f"Program output:\n{clean_output}\n\nProgram execution completed.")
+                        
+                        # Ask for title
+                        await asyncio.sleep(0.8)
+                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                        return TITLE_INPUT
+                
+                # Check if the program is waiting for input by looking for input prompts
+                if "Enter your guess:" in output or any(pattern in output for pattern in context.user_data.get('input_patterns', [])):
+                    state['waiting_for_input'] = True
+                    
+                    # Extract the prompt
+                    lines = output.splitlines()
+                    prompt_line = next((line for line in reversed(lines) if any(pattern in line for pattern in context.user_data.get('input_patterns', []))), "")
+                    
+                    await update.message.reply_text(f"Program output:\n{clean_output}\n\nProgram is waiting for input: \"{prompt_line}\"\nPlease provide input (or type 'done' to finish):")
+                else:
+                    # If no input prompt is found but we haven't used all inputs, assume it's waiting
+                    if debug_info and int(debug_info.group(1)) < int(debug_info.group(2)):
+                        state['waiting_for_input'] = True
+                        await update.message.reply_text(f"Program output:\n{clean_output}\n\nProgram is waiting for input. Please provide input (or type 'done' to finish):")
+                    else:
+                        state['waiting_for_input'] = False
+                        state['completed'] = True
+                        await update.message.reply_text(f"Program output:\n{clean_output}\n\nProgram execution completed.")
+                        
+                        # Ask for title
+                        await asyncio.sleep(0.8)
+                        await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
+                        return TITLE_INPUT
             else:
-                state['waiting_for_input'] = False
-                state['completed'] = True
-                await update.message.reply_text(f"Program output:\n{output}\n\nProgram execution completed.")
-                
-                # Ask for title
-                await asyncio.sleep(0.8)
-                await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-                return TITLE_INPUT
+                # Check if there was an execution error
+                error_match = re.search(r"__EXECUTION_ERROR__: (.*)", output)
+                if error_match:
+                    error_message = error_match.group(1)
+                    logger.error(f"Python execution error: {error_message}")
+                    await update.message.reply_text(f"Error during execution: {error_message}")
+                else:
+                    # If no completion marker and no error, something unexpected happened
+                    logger.warning("Python execution completed without success marker or error")
+                    await update.message.reply_text(f"Program output (incomplete execution):\n{output}")
         
         if stderr:
             error = stderr.decode()
             state['errors'].append(error)
+            logger.error(f"Python stderr: {error}")
             await update.message.reply_text(f"Error: {error}")
         
         # Update the state
@@ -335,7 +426,7 @@ builtins.input = custom_input
         return RUNNING
         
     except Exception as e:
-        logger.error(f"Error in execute_python_with_inputs: {str(e)}")
+        logger.error(f"Error in execute_python_with_inputs: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return RUNNING
 
@@ -842,8 +933,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             # Clear existing terminal log and rebuild it from outputs
             context.user_data['terminal_log'] = []
             for output in outputs:
-                # For the direct execution approach, the output is already in the right format
-                context.user_data['terminal_log'].append(output)
+                # Clean the output by removing our debug markers
+                clean_output = re.sub(r"\n__EXECUTION_COMPLETED_SUCCESSFULLY__.*", "", output)
+                clean_output = re.sub(r"\n__DEBUG_INFO__.*", "", clean_output)
+                clean_output = re.sub(r"\n__EXECUTION_ERROR__.*", "", clean_output)
+                
+                context.user_data['terminal_log'].append(clean_output)
+        
+        # Log the terminal log for debugging
+        logger.info(f"Terminal log for PDF: {context.user_data['terminal_log']}")
 
         # Generate HTML with proper tab alignment styling and page break control
         html_content = f"""
@@ -935,33 +1033,64 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
+        # Check if wkhtmltopdf is installed
+        try:
+            wkhtmltopdf_check = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
+            if wkhtmltopdf_check.returncode != 0:
+                # Install wkhtmltopdf if not found
+                logger.info("wkhtmltopdf not found, installing...")
+                install_result = subprocess.run(["apt-get", "update", "-y"], capture_output=True, text=True)
+                install_result = subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], capture_output=True, text=True)
+                if install_result.returncode != 0:
+                    logger.error(f"Failed to install wkhtmltopdf: {install_result.stderr}")
+                    raise Exception("Failed to install PDF generation tool")
+        except Exception as e:
+            logger.error(f"Error checking/installing wkhtmltopdf: {str(e)}")
+            # Continue anyway, it might still work
+        
         # Generate PDF with specific options to control page breaks
-        subprocess.run([
-            "wkhtmltopdf",
-            "--enable-smart-shrinking",
-            "--print-media-type",
-            "--page-size", "A4",
-            "output.html", 
-            pdf_filename
-        ])
+        try:
+            pdf_result = subprocess.run([
+                "wkhtmltopdf",
+                "--enable-smart-shrinking",
+                "--print-media-type",
+                "--page-size", "A4",
+                "output.html", 
+                pdf_filename
+            ], capture_output=True, text=True)
+            
+            if pdf_result.returncode != 0:
+                logger.error(f"PDF generation error: {pdf_result.stderr}")
+                raise Exception(f"Failed to generate PDF: {pdf_result.stderr}")
+            
+            logger.info(f"PDF generated successfully: {pdf_filename}")
+        except Exception as e:
+            logger.error(f"Error generating PDF: {str(e)}")
+            await update.message.reply_text(f"Error generating PDF: {str(e)}")
+            return
 
         # Send PDF to user
-        with open(pdf_filename, 'rb') as pdf_file:
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=pdf_file,
-                filename=pdf_filename,
-                caption=f"Execution report for {program_title}"
-            )
-            if update.message:
-                await update.message.reply_text("You can use /start to run another program or /cancel to end.")
-            else:
-                await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="You can use /start to run another program or /cancel to end."
-            )
+        try:
+            with open(pdf_filename, 'rb') as pdf_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=pdf_file,
+                    filename=pdf_filename,
+                    caption=f"Execution report for {program_title}"
+                )
+                if update.message:
+                    await update.message.reply_text("You can use /start to run another program or /cancel to end.")
+                else:
+                    await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="You can use /start to run another program or /cancel to end."
+                )
+        except Exception as e:
+            logger.error(f"Error sending PDF: {str(e)}")
+            await update.message.reply_text(f"Error sending PDF: {str(e)}")
     
     except Exception as e:
+        logger.error(f"Failed to generate PDF: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
     finally:
         await cleanup(context)
@@ -1011,22 +1140,25 @@ async def cleanup(context: CallbackContext):
     if language == 'C':
         for file in ["temp.c", "temp", "output.html"]:
             if os.path.exists(file):
-                os.remove(file)
+                try:
+                    os.remove(file)
+                except Exception as e:
+                    logger.error(f"Error removing file {file}: {str(e)}")
     else:  # Python
         for file in ["temp.py", "direct_execution.py", "output.html"]:
             if os.path.exists(file):
                 try:
                     os.remove(file)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error removing file {file}: {str(e)}")
     
     # Remove PDF files except the bot files
     for file in os.listdir():
         if file.endswith(".pdf") and file != "bot.py" and file != "dual_language_bot.py":
             try:
                 os.remove(file)
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error removing PDF file {file}: {str(e)}")
     
     context.user_data.clear()
 
@@ -1059,7 +1191,7 @@ def main() -> None:
         print("Error: Another instance of this bot is already running. Please stop it and try again.")
         return
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}\n{traceback.format_exc()}")
         raise
 
 
