@@ -218,13 +218,23 @@ async def handle_python_code(update: Update, context: CallbackContext) -> int:
         modified_code = """
 import sys
 import builtins
+import os
+
+# Initialize input_values
+input_values = []
+
+# Try to load input values if the file exists
+try:
+    if os.path.exists("input_values.py"):
+        from input_values import input_values
+except Exception as e:
+    print(f"Warning: Could not load input values: {e}")
+    input_values = []
+
+input_index = 0
 
 # Store original input function
 original_input = builtins.input
-
-# Input values that will be provided
-input_values = []
-input_index = 0
 
 # Override input function
 def custom_input(prompt=""):
@@ -295,6 +305,7 @@ async def execute_python_with_inputs(update: Update, context: CallbackContext, i
         executor_code = f"""
 import sys
 import subprocess
+import os
 
 # The input values to provide
 input_values = {repr(state['inputs_provided'])}
@@ -302,6 +313,11 @@ input_values = {repr(state['inputs_provided'])}
 # Write the input values to a file that the modified code will read
 with open("input_values.py", "w") as f:
     f.write(f"input_values = {repr(input_values)}\\n")
+
+# Make sure the file exists before executing
+if not os.path.exists("input_values.py"):
+    print("Error: Failed to create input_values.py file")
+    sys.exit(1)
 
 # Execute the modified code
 result = subprocess.run(
