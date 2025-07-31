@@ -33,7 +33,7 @@ if not TOKEN:
     raise ValueError("No TOKEN provided in environment variables!")
 
 # States for ConversationHandler
-CODE, RUNNING = range(2)
+CODE, RUNNING, ASK_TITLE = range(3)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
@@ -208,7 +208,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     await update.message.reply_text("Program execution completed.")
-                    await generate_and_send_pdf(update, context, title="Program Execution Log")
+                    await ask_for_title(update, context)
                     break
                 else:
                     # No output seen, just wait a bit more
@@ -292,7 +292,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                 'timestamp': datetime.datetime.now()
             })
             await update.message.reply_text("Program execution completed.")
-            await generate_and_send_pdf(update, context, title="Program Execution Log")
+            await ask_for_title(update, context)
             break
 
 def process_output_chunk(context, buffer, update):
@@ -360,8 +360,8 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.stdin.drain()
         process.stdin.close()
         await process.wait()
-        await generate_and_send_pdf(update, context, title="Program Execution Log")
-        return ConversationHandler.END
+        await ask_for_title(update, context)
+        return ASK_TITLE
     
     # Add user input to execution log
     execution_log.append({
@@ -387,6 +387,18 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(f"Input sent: {user_input}")
     
     return RUNNING
+
+async def ask_for_title(update: Update, context: CallbackContext) -> int:
+    """Asks the user for a PDF title."""
+    await update.message.reply_text("Please enter a title for the PDF report.")
+    return ASK_TITLE
+
+async def receive_title(update: Update, context: CallbackContext) -> int:
+    """Receives the PDF title and generates the report."""
+    title = update.message.text
+    await generate_and_send_pdf(update, context, title=title)
+    return ConversationHandler.END
+
 
 async def generate_and_send_pdf(update: Update, context: CallbackContext, title: str = "Execution Log"):
     try:
@@ -576,6 +588,7 @@ def main() -> None:
             states={
                 CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
                 RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
+                ASK_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_title)]
             },
             fallbacks=[CommandHandler('cancel', cancel)],
         )
