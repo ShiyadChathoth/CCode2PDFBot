@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Telegram Bot Token
-TOKEN = os.getenv('TOKEN')
+TOKEN = os.getenv(\'TOKEN\')
 
 if not TOKEN:
     raise ValueError("No TOKEN provided in environment variables!")
@@ -37,7 +37,8 @@ CODE, RUNNING = range(2)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
+        """*C Code Execution Bot*\n\nHi! Send me your C code, and I will compile and execute it step-by-step.""",
+        parse_mode='Markdown'
     )
     return CODE
 
@@ -59,6 +60,12 @@ def clean_whitespace(code):
 async def handle_code(update: Update, context: CallbackContext) -> int:
     original_code = update.message.text
     
+    # Display the received C code to the user
+    await update.message.reply_text(
+        f"""*Received C Code:*\n```c\n{html.escape(original_code)}\n```""",
+        parse_mode='Markdown'
+    )
+
     # Clean whitespace characters that might cause compilation issues
     code = clean_whitespace(original_code)
     
@@ -320,7 +327,7 @@ def process_output_chunk(context, buffer, update):
             # 2. Words like "Enter", "Input", "Type" followed by any text
             # 3. Phrases asking for input without proper spacing
             is_prompt = (
-                line_stripped.rstrip().endswith((':','>','?')) or
+                line_stripped.rstrip().endswith((':', '>', '?')) or
                 re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
                 "number" in line_stripped.lower()
             )
@@ -400,200 +407,77 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         
         # Filter execution log to keep only compilation success and program completion messages
         filtered_execution_log = [
-            entry for entry in execution_log 
-            if entry['type'] == 'system' and (
-                entry['message'] == 'Code compiled successfully!' or 
-                entry['message'] == 'Code compiled successfully after aggressive whitespace cleaning!' or
-                entry['message'] == 'Program execution completed.'
-            )
+            entry for entry in execution_log if entry['type'] in ['system', 'error']
         ]
-        
-        # Create a more detailed HTML with syntax highlighting and better formatting
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>C Program Execution Report</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
-                h2 {{ color: #3498db; margin-top: 20px; }}
-                pre {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }}
-                code {{ font-family: Consolas, Monaco, 'Andale Mono', monospace; }}
-                .output {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #3498db; margin: 10px 0; white-space: pre-wrap; }}
-                .prompt {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #9b59b6; margin: 10px 0; white-space: pre-wrap; }}
-                .input {{ background-color: #f0f7e6; padding: 10px; border-left: 4px solid #27ae60; margin: 10px 0; white-space: pre-wrap; }}
-                .error {{ background-color: #fae5e5; padding: 10px; border-left: 4px solid #e74c3c; margin: 10px 0; white-space: pre-wrap; }}
-                .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
-                .execution-flow {{ margin-top: 20px; }}
-                .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
-                .interaction {{ border: 1px solid #eee; margin-bottom: 15px; padding: 10px; border-radius: 5px; }}
-                .terminal {{ 
-                    background-color: #2b2b2b; 
-                    color: #f8f8f2; 
-                    padding: 20px; 
-                    border-radius: 5px; 
-                    font-family: monospace; 
-                    white-space: pre; 
-                    line-height: 1.5;
-                    margin: 0;
-                    padding-left: 0;
-                }}
-                .terminal-line {{
-                    margin: 0;
-                    padding-left: 10px;  /* Add consistent indentation to each line */
-                }}
-            </style>
-        </head>
-        <body>
-            <h1>C Program Execution Report</h1>
-            
-            <h2>Source Code</h2>
-            <pre><code>{html.escape(code)}</code></pre>
-            
-            <h2>Terminal View</h2>
-            <pre class="terminal">"""
-        
-        # Create a clean terminal view that focuses on program prompts and user inputs
-        terminal_content = ""
-        for entry in terminal_log:
-            entry_type = entry['type']
-            content = entry['content']
-            
-            # Process the content line by line to add indentation to each line
-            lines = content.splitlines(True)  # Keep line endings
-            for line in lines:
-                if line.strip():  # Only process non-empty lines
-                    # Add a consistent indentation to each line
-                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
-                else:
-                    terminal_content += html.escape(line)
-        
-        html_content += terminal_content
-        
-        html_content += """</pre>
-        """
-        
-        # Add only the system messages for compilation success and program completion
-        if filtered_execution_log:
-            html_content += """
-            <h2>System Messages</h2>
-            <div class="execution-flow">
-            """
-            
-            for entry in filtered_execution_log:
-                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
-                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
-            
-            html_content += """
-            </div>
-            """
-        
-        html_content += """
-        </body>
-        </html>
-        """
-        
-        with open("output.html", "w") as file:
-            file.write(html_content)
-        
-        # Generate PDF with wkhtmltopdf
-        pdf_process = subprocess.run(
-            ["wkhtmltopdf", "--enable-local-file-access", "output.html", "output.pdf"],
-            capture_output=True,
-            text=True
-        )
-        
-        if pdf_process.returncode != 0:
-            logger.error(f"PDF generation failed: {pdf_process.stderr}")
-            await update.message.reply_text("Failed to generate PDF report. Sending HTML instead.")
-            with open('output.html', 'rb') as html_file:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id, 
-                    document=html_file,
-                    filename="program_execution.html"
-                )
-        else:
-            # Send both PDF and HTML for maximum compatibility
-            await update.message.reply_text("Generating execution report...")
-            with open('output.pdf', 'rb') as pdf_file:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id, 
-                    document=pdf_file,
-                    filename="program_execution.pdf"
-                )
-            
-            with open('output.html', 'rb') as html_file:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id, 
-                    document=html_file,
-                    filename="program_execution.html"
-                )
-        
-    except Exception as e:
-        logger.error(f"Error in PDF generation: {str(e)}")
-        await update.message.reply_text(f"Failed to generate report: {str(e)}")
-    finally:
-        await cleanup(context)
 
-async def cleanup(context: CallbackContext):
-    process = context.user_data.get('process')
-    if process and process.returncode is None:
-        try:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-        except Exception as e:
-            logger.error(f"Error during process cleanup: {str(e)}")
-    
-    # Clean up temporary files
-    for file in ["temp.c", "temp", "output.pdf", "output.html"]:
-        if os.path.exists(file):
-            try:
-                os.remove(file)
-            except Exception as e:
-                logger.error(f"Error removing file {file}: {str(e)}")
-    
-    context.user_data.clear()
+        # Create a detailed Markdown report
+        markdown_report = "# C Code Execution Report\n\n"
+        markdown_report += f"## Original Code\n```c\n{html.escape(code)}\n```\n\n"
+        
+        markdown_report += "## Execution Log\n"
+        for entry in filtered_execution_log:
+            timestamp = entry['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+            if entry['type'] == 'system':
+                markdown_report += f"- **[{timestamp}] System:** {entry['message']}\n"
+            elif entry['type'] == 'error':
+                markdown_report += f"- **[{timestamp}] Error:** {entry['message']}\n"
+        markdown_report += "\n"
+
+        markdown_report += "## Terminal View\n```terminal\n"
+        for entry in terminal_log:
+            if entry['type'] == 'output':
+                markdown_report += entry['content']
+            elif entry['type'] == 'input':
+                markdown_report += f"> {entry['content']}"
+        markdown_report += "```\n\n"
+
+        # Save Markdown to a file
+        report_filename_md = "execution_report.md"
+        with open(report_filename_md, "w") as f:
+            f.write(markdown_report)
+
+        # Convert Markdown to PDF
+        report_filename_pdf = "execution_report.pdf"
+        subprocess.run(["manus-md-to-pdf", report_filename_md, report_filename_pdf], check=True)
+
+        # Send the PDF to the user
+        await update.message.reply_document(document=open(report_filename_pdf, 'rb'))
+
+        # Clean up temporary files
+        os.remove("temp.c")
+        if os.path.exists("temp"):
+            os.remove("temp")
+        os.remove(report_filename_md)
+        os.remove(report_filename_pdf)
+
+    except Exception as e:
+        logger.error(f"Error generating or sending PDF: {e}")
+        await update.message.reply_text(f"An error occurred while generating the report: {str(e)}")
+
 
 async def cancel(update: Update, context: CallbackContext) -> int:
+    process = context.user_data.get('process')
+    if process and process.returncode is None:
+        process.terminate()
+        await process.wait()
+        await update.message.reply_text("Program terminated.")
     await update.message.reply_text("Operation cancelled.")
-    await cleanup(context)
     return ConversationHandler.END
 
 def main() -> None:
-    try:
-        # Build the application
-        application = Application.builder().token(TOKEN).build()
-        
-        # Define the conversation handler
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
-                RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-        
-        # Add handler to application
-        application.add_handler(conv_handler)
-        
-        # Log startup and start polling
-        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-        
-    except telegram.error.Conflict as e:
-        logger.error(f"Conflict error: {e}. Ensure only one bot instance is running.")
-        print("Error: Another instance of this bot is already running. Please stop it and try again.")
-        return
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise
+    application = Application.builder().token(TOKEN).build()
+
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
+            RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    application.add_handler(conv_handler)
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
