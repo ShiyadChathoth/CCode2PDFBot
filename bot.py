@@ -99,30 +99,30 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         )
     
     context.user_data['code'] = code  # Store original code for display
-    context.user_data['output'] = # Fixed: Initialized as empty list
-    context.user_data['inputs'] = # Fixed: Initialized as empty list
-    context.user_data['errors'] = # Fixed: Initialized as empty list
+    context.user_data['output'] = []
+    context.user_data['inputs'] = []
+    context.user_data['errors'] = []
     context.user_data['waiting_for_input'] = False
-    context.user_data['execution_log'] = # Fixed: Initialized as empty list
+    context.user_data['execution_log'] = []
     context.user_data['output_buffer'] = ""
-    context.user_data['terminal_log'] = # Fixed: Initialized as empty list
+    context.user_data['terminal_log'] = []
     context.user_data['program_completed'] = False
     context.user_data['last_prompt'] = ""
-    context.user_data['pending_messages'] = # Fixed: Initialized as empty list
+    context.user_data['pending_messages'] = []
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
-    context.user_data['all_prompts'] = # Fixed: Initialized as empty list
+    context.user_data['all_prompts'] = []
     context.user_data['final_output_captured'] = False  # Flag to track if final output has been captured
     
     # NEW: Use a completely different approach for terminal simulation
     # Instead of appending to a list that can get duplicates, use a dictionary with unique keys
-    context.user_data['terminal_entries'] = {}  # Dictionary to store terminal entries with unique keys
-    context.user_data['entry_order'] = # Fixed: Initialized as empty list
+    context.user_data['terminal_entries'] = {}
+    context.user_data['entry_order'] = []
     context.user_data['execution_session'] = str(time.time())  # Unique identifier for this execution session
     
     # NEW: Track seen content to prevent exact duplicates
-    context.user_data['seen_content'] = set()  # Set of content we've already seen
-    context.user_data['content_counts'] = {}  # Count occurrences of each content
+    context.user_data['seen_content'] = set()
+    context.user_data['content_counts'] = {}
     
     # Initialize activity monitoring
     context.user_data['activity_stats'] = {
@@ -219,7 +219,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         add_terminal_entry(context, 'system', 'C code compilation successful! Ready to execute.')
         
         # For C, input patterns are not extracted in the same way as Python
-        context.user_data['input_patterns'] = # Fixed: Initialized as empty list
+        context.user_data['input_patterns'] = []
         
         await update.message.reply_text("C code compilation successful! Ready to execute.")
     
@@ -291,7 +291,7 @@ def add_terminal_entry(context, entry_type, content, sequence=None):
     context.user_data['terminal_entries'] = terminal_entries
     
     # Add to entry order list to maintain order
-    entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
+    entry_order = context.user_data.get('entry_order', [])
     entry_order.append(entry_key)
     context.user_data['entry_order'] = entry_order
     
@@ -327,8 +327,8 @@ def add_output_capture_delay(code):
 
 def extract_input_statements(code):
     """Extract potential input prompt patterns from Python code."""
-    input_patterns = # Fixed: Initialized as empty list
-    pattern = r'input\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
+    input_patterns = []
+    pattern = r'input\s*\(\s*[\"\"](.*?)[\"\"](?:,|\))'
     input_matches = re.finditer(pattern, code)
     
     for match in input_matches:
@@ -526,7 +526,7 @@ async def ensure_all_prompts_captured(context):
     """Ensure all detected prompts are captured in the terminal entries"""
     try:
         # Get all prompts
-        all_prompts = context.user_data.get('all_prompts',) # Fixed: Initialized as empty list
+        all_prompts = context.user_data.get('all_prompts', [])
         
         # Add any missing prompts to the terminal entries
         for i, prompt in enumerate(all_prompts):
@@ -585,7 +585,7 @@ async def ensure_final_output_captured(context):
         
         # Get all terminal entries
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
+        entry_order = context.user_data.get('entry_order', [])
         
         # Check the last few entries for success messages that might have been missed
         checked_entries = 0
@@ -790,667 +790,350 @@ def post_process_terminal_entries(context):
     try:
         # Get all terminal entries and their order
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
+        entry_order = context.user_data.get('entry_order', [])
         
         if not terminal_entries or not entry_order:
             return
         
-        # Create a new list to store the filtered entry order
-        filtered_order = # Fixed: Initialized as empty list
+        # Create a new list for the cleaned order
+        cleaned_entry_order = []
+        # Create a set to keep track of seen content (for exact duplicates)
+        seen_content_for_post_processing = set()
         
-        # Track content we've seen to detect duplicates
-        seen_content = {}  # Map content to entry key
-        
-        # HARDCODED FIX: Special handling for "Please enter a valid number"
-        valid_number_seen = False
-        
-        # Process entries in order
-        for key in entry_order:
-            entry = terminal_entries.get(key, {})
+        for entry_key in entry_order:
+            entry = terminal_entries.get(entry_key)
             if not entry:
                 continue
-                
-            entry_type = entry.get('type', '')
-            content = entry.get('content', '')
             
-            # Skip system messages about title
-            if entry_type == 'system' and 'Using title:' in content:
-                continue
+            content = entry.get('content')
+            entry_type = entry.get('type')
             
-            # HARDCODED FIX: Special handling for "Please enter a valid number"
-            if content == "Please enter a valid number." and entry_type in ['output', 'prompt']:
-                if valid_number_seen:
-                    logger.info("HARDCODED FIX: Skipping duplicate 'Please enter a valid number.'")
+            # Only consider output and prompt types for content de-duplication
+            if entry_type in ['output', 'prompt']:
+                if content in seen_content_for_post_processing:
+                    # This is a duplicate, skip it
+                    logger.info(f"Post-processing: Skipping duplicate content: {content[:50]}...")
                     continue
                 else:
-                    valid_number_seen = True
+                    seen_content_for_post_processing.add(content)
             
-            # For output and prompt types, check for duplicates
-            if entry_type in ['output', 'prompt']:
-                # If we've seen this content before, skip it
-                if content in seen_content:
-                    # Keep the first occurrence only
-                    continue
-                
-                # First time seeing this content, add it to seen_content
-                seen_content[content] = key
+            cleaned_entry_order.append(entry_key)
             
-            # Add this entry to the filtered order
-            filtered_order.append(key)
+        context.user_data['entry_order'] = cleaned_entry_order
         
-        # Update the entry order with the filtered list
-        context.user_data['entry_order'] = filtered_order
-        
-        logger.info(f"Post-processed terminal entries: removed {len(entry_order) - len(filtered_order)} duplicates")
     except Exception as e:
-        logger.error(f"Error post-processing terminal entries: {str(e)}")
+        logger.error(f"Error during post-processing terminal entries: {str(e)}")
 
-async def process_output_message(update, message, prefix=""):
-    """Helper function to send output messages with better ordering control"""
-    try:
-        await update.message.reply_text(f"{prefix}{message}")
-    except Exception as e:
-        logger.error(f"Failed to send message: {e}")
-
-def process_output_chunk(context, buffer, update):
-    """Process the output buffer, preserving tabs and whitespace with improved prompt detection."""
+def process_output_chunk(context, current_buffer, update):
+    """
+    Processes a chunk of output, looking for prompts and handling full lines.
+    Returns the remaining buffer.
+    """
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    patterns = context.user_data.get('input_patterns',) # Fixed: Initialized as empty list
-    stats = context.user_data.get('activity_stats', {})
     
-    # First check if the entire buffer might be a prompt without a newline
-    if buffer and not buffer.endswith('\n'):
-        is_prompt, prompt_text = detect_prompt(buffer, patterns)
-        if is_prompt:
-            context.user_data['last_prompt'] = prompt_text
-            
-            # Add to all_prompts list for final capture
-            all_prompts = context.user_data.get('all_prompts',) # Fixed: Initialized as empty list
-            if prompt_text not in all_prompts:
-                all_prompts.append(prompt_text)
-                context.user_data['all_prompts'] = all_prompts
-            
-            log_entry = {
-                'type': 'prompt',
-                'message': buffer,
-                'timestamp': datetime.datetime.now(),
-                'raw': buffer
-            }
-            
-            execution_log.append(log_entry)
-            
-            # Add to terminal entries
-            add_terminal_entry(context, 'prompt', buffer)
-            
-            asyncio.create_task(process_output_message(update, buffer, "Program prompt: "))
-            
-            # We've processed the buffer as a prompt, so we can be waiting for input
-            context.user_data['waiting_for_input'] = True
-            
-            # Update activity stats
-            stats['last_output_time'] = time.time()
-            stats['idle_time'] = 0
-            context.user_data['activity_stats'] = stats
-            
-            return ""
-    
-    # Normal line-by-line processing for output with newlines
-    lines = re.findall(r'[^\n]*\n|[^\n]+$', buffer)
-    
+    # Split by newline, but keep the newline character if it exists
+    lines = current_buffer.splitlines(keepends=True)
     new_buffer = ""
-    if lines and not buffer.endswith('\n'):
-        new_buffer = lines[-1]
-        lines = lines[:-1]
     
     for line in lines:
-        line_stripped = line.rstrip()  # Use rstrip() to preserve leading whitespace but remove trailing newlines
-        if line_stripped:
-            output.append(line_stripped)
+        if line.endswith('\n'):
+            # It's a complete line, process it
+            processed_line = line.strip('\n')
             
-            # Enhanced prompt detection
-            is_prompt, prompt_text = detect_prompt(line_stripped, patterns)
-            
-            # Check for success messages that might be final output
-            is_success_message = detect_success_message(line_stripped)
-            
-            if is_prompt:
-                context.user_data['last_prompt'] = prompt_text
+            # Check if it's a prompt (ends with common prompt characters)
+            is_prompt = False
+            if processed_line.endswith((':', '?', '>')) or any(p in processed_line for p in context.user_data.get('input_patterns', [])):
+                is_prompt = True
                 context.user_data['waiting_for_input'] = True
+                context.user_data['last_prompt'] = processed_line
+                context.user_data['all_prompts'].append(processed_line)
                 
-                # Add to all_prompts list for final capture
-                all_prompts = context.user_data.get('all_prompts',) # Fixed: Initialized as empty list
-                if prompt_text not in all_prompts:
-                    all_prompts.append(prompt_text)
-                    context.user_data['all_prompts'] = all_prompts
+                execution_log.append({
+                    'type': 'prompt',
+                    'message': processed_line,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': line
+                })
+                
+                # Add to terminal entries
+                add_terminal_entry(context, 'prompt', processed_line)
+                
+                # Send prompt to user
+                asyncio.create_task(update.message.reply_text(f"Program asks for input: {processed_line}"))
+                
+            else:
+                # It's regular output
+                output.append(processed_line)
+                execution_log.append({
+                    'type': 'output',
+                    'message': processed_line,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': line
+                })
+                
+                # Add to terminal entries
+                add_terminal_entry(context, 'output', processed_line)
+                
+                # Send output to user if it's not a prompt
+                asyncio.create_task(update.message.reply_text(f"Program output: {processed_line}"))
+                
+            context.user_data['output_buffer'] = "" # Clear buffer after processing a full line
             
-            log_entry = {
-                'type': 'prompt' if is_prompt else 'output',
-                'message': line_stripped,
-                'timestamp': datetime.datetime.now(),
-                'raw': line
-            }
+        else:
+            # It's an incomplete line, keep it in the buffer
+            new_buffer += line
             
-            execution_log.append(log_entry)
-            
-            # Add to terminal entries
-            add_terminal_entry(context, 'prompt' if is_prompt else 'output', line_stripped)
-            
-            prefix = "Program prompt:" if is_prompt else "Program output:"
-            
-            asyncio.create_task(process_output_message(update, line_stripped, f"{prefix} "))
-            
-            # Update activity stats
-            stats['last_output_time'] = time.time()
-            stats['idle_time'] = 0
-            context.user_data['activity_stats'] = stats
-    
+            # Check if the incomplete line is a prompt (without a newline)
+            is_prompt = False
+            if new_buffer.endswith((':', '?', '>')) or any(p in new_buffer for p in context.user_data.get('input_patterns', [])):
+                is_prompt = True
+                context.user_data['waiting_for_input'] = True
+                context.user_data['last_prompt'] = new_buffer
+                context.user_data['all_prompts'].append(new_buffer)
+                
+                execution_log.append({
+                    'type': 'prompt',
+                    'message': new_buffer,
+                    'timestamp': datetime.datetime.now(),
+                    'raw': new_buffer # Use new_buffer as raw for incomplete prompt
+                })
+                
+                # Add to terminal entries
+                add_terminal_entry(context, 'prompt', new_buffer)
+                
+                # Send prompt to user
+                asyncio.create_task(update.message.reply_text(f"Program asks for input: {new_buffer}"))
+                
+                # Clear the buffer as we've processed this as a prompt
+                new_buffer = ""
+                context.user_data['output_buffer'] = ""
+                
     return new_buffer
 
-def detect_success_message(line):
-    """Detect if a line contains a success message that might be final output"""
-    success_patterns = [
-        "correct",
-        "congratulations",
-        "success",
-        "completed",
-        "finished",
-        "won",
-        "🎉",
-        "✓",
-        "✅"
-    ]
-    
-    return any(pattern in line.lower() for pattern in success_patterns)
-
-def detect_prompt(line, patterns):
-    """Enhanced detection for prompts. Returns (is_prompt, prompt_text)"""
-    line_text = line.strip()
-    
-    # First check if the line matches or closely matches any extracted patterns
-    for pattern in patterns:
-        # Direct match
-        if pattern in line_text:
-            return True, line_text
-        
-        # Fuzzy match - check if most of the pattern appears in the line
-        # This helps with format specifiers that have been replaced with actual values
-        pattern_words = set(re.findall(r'\w+', pattern))
-        line_words = set(re.findall(r'\w+', line_text))
-        common_words = pattern_words.intersection(line_words)
-        
-        # If we have a significant match and the pattern ends with a prompt character
-        if (len(common_words) >= len(pattern_words) * 0.6 or 
-            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>', ' ')))) and len(pattern_words) > 0:
-            return True, line_text
-    
-    # Input keywords check
-    input_keywords = ['enter', 'input', 'type', 'provide', 'give', 'value', 'values']
-    line_lower = line_text.lower()
-    
-    for keyword in input_keywords:
-        if keyword in line_lower:
-            return True, line_text
-    
-    # Check for ending with prompt characters - added space as a prompt character
-    if line_text.rstrip().endswith((':', '?', '>', ' ')):
-        return True, line_text
-    
-    # Check for common patterns where a variable name or description is followed by a colon
-    if re.search(r'[A-Za-z0-9_]+\s*:', line_text):
-        return True, line_text
-    
-    # Check for "Enter XXX: " patterns
-    if re.search(r'[Ee]nter\s+[^:]+:', line_text):
-        return True, line_text
-    
-    # Additional check for very short outputs that might be prompts
-    if len(line_text) < 10 and not line_text.isdigit():
-        return True, line_text
-    
-    # If none of the above, this is probably not a prompt
-    return False, ""
-
-async def handle_running(update: Update, context: CallbackContext) -> int:
+async def handle_input(update: Update, context: CallbackContext) -> int:
     user_input = update.message.text
-    
-    # If program is already completed, treat this as title input
-    if context.user_data.get('program_completed', False):
-        return await handle_title_input(update, context)
-    
-    # Check if user wants to terminate
-    if user_input.lower() == 'done':
-        process = context.user_data.get('process')
-        if process and process.returncode is None:
-            try:
-                process.terminate()
-                await asyncio.sleep(0.5)
-                if process.returncode is None:
-                    process.kill()
-            except Exception as e:
-                logger.error(f"Error terminating process: {e}")
-        
-        # Ensure all prompts are captured
-        await ensure_all_prompts_captured(context)
-        
-        # Ensure final output is captured
-        await ensure_final_output_captured(context)
-        
-        # Post-process the terminal entries to remove any remaining duplicates
-        post_process_terminal_entries(context)
-        
-        await update.message.reply_text("Program execution terminated by user.")
-        
-        # Add to terminal entries
-        add_terminal_entry(context, 'system', "Program execution terminated by user.")
-        
-        context.user_data['program_completed'] = True
-        
-        # Ask for title only if not already requested
-        if not context.user_data.get('title_requested', False):
-            context.user_data['title_requested'] = True
-            await update.message.reply_text("Please provide a title for your program (or type 'skip' to use default):")
-        
-        return TITLE_INPUT
-    
-    # Send input to the process
     process = context.user_data.get('process')
+    
     if not process or process.returncode is not None:
-        await update.message.reply_text("Program is not running anymore.")
+        await update.message.reply_text("No program is currently running or it has already finished.")
         return ConversationHandler.END
     
-    # Set the flag that we're sending input to prevent output processing during this time
-    context.user_data['is_sending_input'] = True
+    context.user_data['inputs'].append(user_input)
+    context.user_data['waiting_for_input'] = False
+    context.user_data['is_sending_input'] = True # Set flag when sending input
     
-    # Add to terminal entries - this is the user input
-    add_terminal_entry(context, 'input', user_input)
-    
-    # Send the input confirmation message first and await it to ensure order
-    sent_message = await update.message.reply_text(f"Input sent: {user_input}")
-    
-    # Comprehensive fix for input handling that works with multiple inputs in loops
-    try:
-        # Ensure the process is still running before sending input
-        if process.returncode is not None:
-            await update.message.reply_text("Program has ended and cannot receive more input.")
-            context.user_data['is_sending_input'] = False
-            return RUNNING
-            
-        # Add newline to input if not already present
-        input_with_newline = user_input if user_input.endswith('\n') else user_input + '\n'
-        
-        # FIX: Properly handle input encoding - check type first before encoding
-        input_bytes = None
-        if isinstance(input_with_newline, bytes):
-            # Already bytes, no need to encode
-            input_bytes = input_with_newline
-        else:
-            # String needs to be encoded
-            try:
-                input_bytes = input_with_newline.encode('utf-8')
-            except UnicodeEncodeError:
-                # Try another encoding if utf-8 fails
-                input_bytes = input_with_newline.encode('latin-1')
-        
-        # Write to stdin and flush
-        if input_bytes:
-            process.stdin.write(input_bytes)
-            await process.stdin.drain()
-            
-            # Store the input for reference
-            context.user_data['inputs'].append(user_input)
-            context.user_data['waiting_for_input'] = False
-            
-            # Update activity stats
-            stats = context.user_data.get('activity_stats', {})
-            stats['last_output_time'] = time.time()  # Input counts as activity
-            stats['idle_time'] = 0
-            context.user_data['activity_stats'] = stats
-        else:
-            raise ValueError("Failed to encode input")
-            
-    except Exception as e:
-        logger.error(f"Input handling error: {e}")
-        await update.message.reply_text(f"Error sending input: {str(e)}")
-        
-        # Add to terminal entries
-        add_terminal_entry(context, 'error', f"Error sending input: {str(e)}")
-        
-        # If we encounter a serious error, we might need to restart the process
-        if "Broken pipe" in str(e) or "Connection reset" in str(e):
-            await update.message.reply_text("Connection to the program was lost. Please restart.")
-            return ConversationHandler.END
-    
-    # Add a small delay to ensure message ordering
-    await asyncio.sleep(0.2)
-    
-    # Reset the flag
-    context.user_data['is_sending_input'] = False
-    
-    return RUNNING
-
-async def handle_title_input(update: Update, context: CallbackContext) -> int:
-    title = update.message.text
-    
-    # Mark that we've received the title input
-    context.user_data['title_received'] = True
-    
-    language = context.user_data.get('language', 'Program')
-    default_title = f"{language} Program Execution Report"
-
-    if title.lower() == 'skip':
-        context.user_data['program_title'] = default_title
-    else:
-        context.user_data['program_title'] = title
+    context.user_data['execution_log'].append({
+        'type': 'input',
+        'message': user_input,
+        'timestamp': datetime.datetime.now()
+    })
     
     # Add to terminal entries
-    add_terminal_entry(context, 'system', f"Using title: {context.user_data['program_title']}")
+    add_terminal_entry(context, 'input', user_input)
     
-    # Ensure all prompts are captured before generating PDF
-    await ensure_all_prompts_captured(context)
-    
-    # Ensure final output is captured
-    await ensure_final_output_captured(context)
-    
-    # Post-process the terminal entries to remove any remaining duplicates
-    post_process_terminal_entries(context)
-    
-    await update.message.reply_text(f"Using title: {context.user_data['program_title']}")
-    await generate_and_send_pdf(update, context)
-    return ConversationHandler.END
-
-async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
-        # Use original code for display (not the modified code with delay)
-        code = context.user_data['code']
-        language = context.user_data.get('language', 'Program')
-        program_title = context.user_data.get('program_title', f"{language} Program Execution Report")
+        # Write input to the process's stdin, followed by a newline
+        process.stdin.write((user_input + '\n').encode())
+        await process.stdin.drain()
+        logger.info(f"Sent input: {user_input}")
+        
+        # Reset the flag after sending input
+        context.user_data['is_sending_input'] = False
+        
+        # Reset idle time after receiving input
+        stats = context.user_data.get('activity_stats', {})
+        stats['last_output_time'] = time.time() # Treat input as activity
+        stats['idle_time'] = 0
+        context.user_data['activity_stats'] = stats
+        
+        return RUNNING
+    except Exception as e:
+        logger.error(f"Error writing to process stdin: {str(e)}\n{traceback.format_exc()}")
+        await update.message.reply_text(f"Failed to send input to program: {str(e)}")
+        
+        # Reset the flag in case of error
+        context.user_data['is_sending_input'] = False
+        
+        return ConversationHandler.END
 
-        # Get terminal entries in order
-        terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
+async def generate_pdf_report(update: Update, context: CallbackContext, title: str):
+    try:
+        # Ensure all prompts are captured before generating PDF
+        await ensure_all_prompts_captured(context)
         
-        # HARDCODED FIX: Final manual check for "Please enter a valid number" duplicates
-        # This is a last resort to ensure no duplicates make it to the PDF
-        final_html = generate_terminal_html(terminal_entries, entry_order)
+        # Ensure final output is captured before generating PDF
+        await ensure_final_output_captured(context)
         
-        # Count occurrences of the problematic string
-        valid_number_count = final_html.count("Please enter a valid number.")
-        if valid_number_count > 1:
-            logger.info(f"HARDCODED FIX: Found {valid_number_count} occurrences of 'Please enter a valid number.' in final HTML")
-            # Replace all occurrences with a single one
-            final_html = final_html.replace("Please enter a valid number.\nPlease enter a valid number.", "Please enter a valid number.")
-            logger.info("HARDCODED FIX: Applied direct HTML replacement for duplicate 'Please enter a valid number.'")
+        # Post-process terminal entries one last time
+        post_process_terminal_entries(context)
         
-        # Generate HTML with terminal-like styling
+        # Create a temporary HTML file for the report
         html_content = f"""
+        <!DOCTYPE html>
         <html>
         <head>
+            <title>Program Execution Report</title>
             <style>
-                @page {{
-                    size: A4;
-                    margin: 20mm;
-                }}
-                body {{
-                    font-family: 'Courier New', monospace;
-                    margin: 0;
-                    padding: 0;
-                    background-color: #FFFFFF;
-                }}
-            .program-title {{
-                    font-size: 24px;
-                    font-weight: bold;
-                    text-align: center;
-                    margin-bottom: 20px;
-                    font-family: Arial, sans-serif;
-                }}
-            .code-section {{
-                    margin-bottom: 20px;
-                    border: 1px solid #ddd;
-                    padding: 10px;
-                    background-color: #f8f8f8;
-                    white-space: pre;
-                    font-family: 'Courier New', monospace;
-                    font-size: 14px;
-                    line-height: 1.3;
-                    overflow-x: auto;
-                }}
-            .terminal {{
-                    background-color: #FFFFFF;
-                    color: #000000;
-                    padding: 10px;
-                    font-family: 'Courier New', monospace;
-                    font-size: 14px;
-                    line-height: 1.3;
-                    white-space: pre-wrap;
-                    border: 1px solid #ddd;
-                }}
-            .prompt {{
-                    color: #0000FF;
-                }}
-            .input {{
-                    color: #008800;
-                    font-weight: bold;
-                }}
-            .output {{
-                    color: #000000;
-                }}
-            .error {{
-                    color: #FF0000;
-                }}
-            .system {{
-                    color: #888888;
-                    font-style: italic;
-                }}
+                body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }}
+                .container {{ background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                h1 {{ color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; margin-bottom: 20px; }}
+                h2 {{ color: #0056b3; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+                pre {{ background-color: #eee; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }}
+                .code-section pre {{ background-color: #272822; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }}
+                .log-entry {{ margin-bottom: 10px; padding: 8px; border-radius: 4px; }}
+                .log-entry.system {{ background-color: #e0f7fa; border-left: 5px solid #00bcd4; }}
+                .log-entry.output {{ background-color: #e8f5e9; border-left: 5px solid #4caf50; }}
+                .log-entry.input {{ background-color: #fff3e0; border-left: 5px solid #ff9800; }}
+                .log-entry.prompt {{ background-color: #e3f2fd; border-left: 5px solid #2196f3; }}
+                .log-entry.error {{ background-color: #ffebee; border-left: 5px solid #f44336; }}
+                .timestamp {{ font-size: 0.8em; color: #777; margin-right: 10px; }}
+                .terminal-view {{ background-color: #000; color: #0f0; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; font-family: 'Courier New', Courier, monospace; line-height: 1.2; }}
+                .terminal-view .prompt {{ color: #0ff; }}
+                .terminal-view .input {{ color: #ff0; }}
+                .terminal-view .error {{ color: #f00; }}
+                .terminal-view .system {{ color: #fff; }}
             </style>
         </head>
         <body>
-            <div class="program-title">{escape_html(program_title)}</div>
+            <div class="container">
+                <h1>Program Execution Report</h1>
+                <p><strong>Title:</strong> {escape_html(title)}</p>
+                <p><strong>Date:</strong> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>Language:</strong> {escape_html(context.user_data.get('language', 'N/A'))}</p>
+
+                <h2>Original Code</h2>
+                <div class="code-section"><pre>{escape_html(context.user_data.get('code', 'No code provided'))}</pre></div>
+
+                <h2>Terminal View</h2>
+                <div class="terminal-view">
+        """
+        
+        # Sort terminal entries by timestamp to ensure chronological order
+        sorted_entry_keys = sorted(context.user_data.get('entry_order', []), 
+                                   key=lambda k: context.user_data['terminal_entries'][k]['timestamp'])
+        
+        for entry_key in sorted_entry_keys:
+            entry = context.user_data['terminal_entries'][entry_key]
+            entry_type = entry['type']
+            content = entry['content']
             
-            <h3>Source Code:</h3>
-            <div class="code-section">{escape_html(code)}</div>
+            # Add a small space before each line for better readability in terminal view
+            formatted_content = " " + escape_html(content)
             
-            <h3>Terminal Output:</h3>
-            <div class="terminal">
-                {final_html}
+            if entry_type == 'prompt':
+                html_content += f"<span class=\"prompt\">{formatted_content}</span>\n"
+            elif entry_type == 'input':
+                html_content += f"<span class=\"input\">{formatted_content}</span>\n"
+            elif entry_type == 'error':
+                html_content += f"<span class=\"error\">{formatted_content}</span>\n"
+            elif entry_type == 'system':
+                html_content += f"<span class=\"system\">{formatted_content}</span>\n"
+            else: # output
+                html_content += f"{formatted_content}\n"
+                
+        html_content += f"""
+                </div>
+
+                <h2>Execution Log</h2>
+        """
+        for entry in context.user_data['execution_log']:
+            timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3] # Milliseconds
+            html_content += f"""
+                <div class="log-entry {entry['type']}">
+                    <span class="timestamp">{timestamp}</span>
+                    <strong>{entry['type'].capitalize()}:</strong> <pre>{escape_html(entry['message'])}</pre>
+                </div>
+            """
+        
+        html_content += f"""
             </div>
         </body>
         </html>
         """
-
-        with open("output.html", "w") as file:
-            file.write(html_content)
-
-        # Generate sanitized filename from title
-        sanitized_title = re.sub(r'[\\/*?:"<>|]', "_", str(program_title))
-        sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
-        pdf_filename = f"{sanitized_title}.pdf"
         
-        # Check if wkhtmltopdf is installed
-        try:
-            wkhtmltopdf_check = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
-            if wkhtmltopdf_check.returncode!= 0:
-                # Install wkhtmltopdf if not found
-                logger.info("wkhtmltopdf not found, installing...")
-                install_result = subprocess.run(["apt-get", "update", "-y"], capture_output=True, text=True)
-                install_result = subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], capture_output=True, text=True)
-                if install_result.returncode!= 0:
-                    logger.error(f"Failed to install wkhtmltopdf: {install_result.stderr}")
-                    raise Exception("Failed to install PDF generation tool")
-        except Exception as e:
-            logger.error(f"Error checking/installing wkhtmltopdf: {str(e)}")
-            # Continue anyway, it might still work
+        with open("report.html", "w") as f:
+            f.write(html_content)
         
-        # Generate PDF
-        try:
-            pdf_result = subprocess.run([
-                "wkhtmltopdf",
-                "--enable-smart-shrinking",
-                "--print-media-type",
-                "--page-size", "A4",
-                "output.html", 
-                pdf_filename
-            ], capture_output=True, text=True)
+        # Convert HTML to PDF using weasyprint
+        # This requires weasyprint to be installed and wkhtmltopdf (or similar) to be available
+        # For simplicity, we'll use a direct command if weasyprint is not directly callable
+        # A more robust solution would involve a Python library like xhtml2pdf or ReportLab
+        
+        # Using xhtml2pdf for direct Python conversion
+        from xhtml2pdf import pisa
+        
+        with open("report.pdf", "wb") as pdf_file:
+            pisa_status = pisa.CreatePDF(
+                html_content,                # the HTML to convert
+                dest=pdf_file)               # file handle to receive result
+        
+        if pisa_status.err:
+            logger.error(f"PDF generation error: {pisa_status.err}")
+            await update.message.reply_text("Failed to generate PDF report.")
+        else:
+            await update.message.reply_document(document=open("report.pdf", 'rb'))
+            logger.info("PDF report sent.")
             
-            if pdf_result.returncode!= 0:
-                logger.error(f"PDF generation error: {pdf_result.stderr}")
-                raise Exception(f"Failed to generate PDF: {pdf_result.stderr}")
-            
-            logger.info(f"PDF generated successfully: {pdf_filename}")
-        except Exception as e:
-            logger.error(f"Error generating PDF: {str(e)}")
-            await update.message.reply_text(f"Error generating PDF: {str(e)}")
-            return
-
-        # Send PDF to user
-        try:
-            with open(pdf_filename, 'rb') as pdf_file:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=pdf_file,
-                    filename=pdf_filename,
-                    caption=f"Terminal output for {program_title}"
-                )
-                if update.message:
-                    await update.message.reply_text("You can use /start to run another program or /cancel to end.")
-                else:
-                    await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="You can use /start to run another program or /cancel to end."
-                )
-        except Exception as e:
-            logger.error(f"Error sending PDF: {str(e)}")
-            await update.message.reply_text(f"Error sending PDF: {str(e)}")
-    
     except Exception as e:
-        logger.error(f"Failed to generate PDF: {str(e)}\n{traceback.format_exc()}")
-        await update.message.reply_text(f"Failed to generate PDF: {str(e)}")
-    finally:
-        await cleanup(context)
+        logger.error(f"Error generating PDF report: {str(e)}\n{traceback.format_exc()}")
+        await update.message.reply_text(f"An error occurred while generating the PDF report: {str(e)}")
 
-def generate_terminal_html(terminal_entries, entry_order):
-    """Generate HTML for terminal-like output with inputs and outputs in execution order"""
-    if not terminal_entries or not entry_order:
-        return "<span class='system'>No terminal output available</span>"
+async def handle_title(update: Update, context: CallbackContext) -> int:
+    title = update.message.text
+    if title.lower() == 'skip':
+        title = "Program Execution Report"
     
-    html = ""
-    
-    # HARDCODED FIX: Track if we've seen "Please enter a valid number"
-    valid_number_seen = False
-    
-    # Process entries in order
-    for key in entry_order:
-        entry = terminal_entries.get(key, {})
-        if not entry:
-            continue
-            
-        entry_type = entry.get('type', '')
-        content = entry.get('content', '')
-        
-        # Skip system messages about title
-        if entry_type == 'system' and 'Using title:' in content:
-            continue
-        
-        # HARDCODED FIX: Special handling for "Please enter a valid number"
-        if content == "Please enter a valid number." and entry_type in ['output', 'prompt']:
-            if valid_number_seen:
-                logger.info("HARDCODED FIX: Skipping duplicate 'Please enter a valid number.' in HTML generation")
-                continue
-            else:
-                valid_number_seen = True
-        
-        if entry_type == 'prompt':
-            html += f"<span class='prompt'>{escape_html(content)}</span>\n"
-        elif entry_type == 'input':
-            html += f"<span class='input'>{escape_html(content)}</span>\n"
-        elif entry_type == 'output':
-            html += f"<span class='output'>{escape_html(content)}</span>\n"
-        elif entry_type == 'error':
-            html += f"<span class='error'>{escape_html(content)}</span>\n"
-        elif entry_type == 'system':
-            html += f"<span class='system'>{escape_html(content)}</span>\n"
-    
-    return html
-
-async def cleanup(context: CallbackContext):
-    process = context.user_data.get('process')
-    if process and process.returncode is None:
-        try:
-            process.terminate()
-            # Give it a moment to terminate gracefully
-            await asyncio.sleep(0.5)
-            # If still running, force kill
-            if process.returncode is None:
-                process.kill()
-        except Exception as e:
-            logger.error(f"Error terminating process during cleanup: {e}")
-        
-        try:
-            await process.wait()
-        except asyncio.TimeoutError:
-            logger.error("Timeout waiting for process to terminate during cleanup")
+    await generate_pdf_report(update, context, title)
     
     # Clean up temporary files
-    files_to_remove = [
-        "temp.py", "direct_execution.py", "simple_execution.py", "output.html",
-        "temp.c", "a.out" # Added C-specific files
-    ]
-    for file in files_to_remove:
-        if os.path.exists(file):
-            try:
-                os.remove(file)
-            except Exception as e:
-                logger.error(f"Error removing file {file}: {str(e)}")
-    
-    # Remove PDF files except the bot files
-    for file in os.listdir():
-        if file.endswith(".pdf") and file not in ["bot.py", "pdf_fixed_bot.py", "html_fixed_bot.py", "final_bot.py", "terminal_bot.py", "prompt_fixed_bot.py", "final_output_bot.py", "fixed_duplicate_bot.py", "final_working_bot.py", "final_solution.py", "hardcoded_solution.py"]:
-            try:
-                os.remove(file)
-            except Exception as e:
-                logger.error(f"Error removing PDF file {file}: {str(e)}")
-    
-    # Clear user data but preserve certain flags for conversation flow
-    title_requested = context.user_data.get('title_requested', False)
-    title_received = context.user_data.get('title_received', False)
-    program_completed = context.user_data.get('program_completed', False)
-    
-    context.user_data.clear()
-    
-    # Restore critical flags if needed for conversation flow
-    if not title_received and (title_requested or program_completed):
-        context.user_data['title_requested'] = title_requested
-        context.user_data['program_completed'] = program_completed
+    for f in ["temp.py", "temp.c", "a.out", "simple_execution.py", "report.html", "report.pdf"]:
+        if os.path.exists(f):
+            os.remove(f)
+            
+    context.user_data.clear() # Clear all user data after report generation
+    return ConversationHandler.END
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Operation cancelled. You can use /start to begin again.")
-    await cleanup(context)
+    await update.message.reply_text('Operation cancelled.')
+    
+    # Clean up temporary files
+    for f in ["temp.py", "temp.c", "a.out", "simple_execution.py", "report.html", "report.pdf"]:
+        if os.path.exists(f):
+            os.remove(f)
+            
+    context.user_data.clear() # Clear all user data on cancel
     return ConversationHandler.END
 
 def main() -> None:
-    try:
-        application = Application.builder().token(TOKEN).build()
-        
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                LANGUAGE_CHOICE:,
-                CODE:,
-                RUNNING:,
-                TITLE_INPUT:,
-            },
-            fallbacks=[CommandHandler('cancel', cancel)],
-        )
-        
-        application.add_handler(conv_handler)
-        application.add_handler(CommandHandler('cancel', cancel))
-        
-        logger.info("Bot is about to start polling with token: %s", TOKEN[:10] + "...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}\n{traceback.format_exc()}")
-        raise
+    """Start the bot."""
+    # Create the Application and pass your bot's token.
+    application = Application.builder().token(TOKEN).build()
 
+    # Add conversation handler with states
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            LANGUAGE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_choice)],
+            CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
+            RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input)],
+            TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+    )
+
+    application.add_handler(conv_handler)
+
+    # Run the bot until the user presses Ctrl-C
+    logger.info("Bot started. Press Ctrl-C to stop.")
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except telegram.error.TelegramError as e:
+        logger.error(f"Telegram error: {e}")
+    except Exception as e:
+        logger.critical(f"Critical error in bot: {e}\n{traceback.format_exc()}")
+    finally:
+        logger.info("Bot stopped.")
 
 if __name__ == '__main__':
     main()
