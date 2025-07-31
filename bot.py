@@ -440,10 +440,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     margin: 0;
                     padding-left: 0;
                 }}
-                .terminal-line {{
-                    margin: 0;
-                    padding-left: 10px;  /* Add consistent indentation to each line */
-                }}
             </style>
         </head>
         <body>
@@ -461,16 +457,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             entry_type = entry['type']
             content = entry['content']
             
-            # Process the content line by line to add indentation to each line
-            lines = content.splitlines(True)  # Keep line endings
-            for line in lines:
-                if line.strip():  # Only process non-empty lines
-                    # Add a consistent indentation to each line
-                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
-                else:
-                    terminal_content += html.escape(line)
+            # Add content directly to maintain exact terminal appearance
+            # Ensure no unwanted spaces are added
+            terminal_content += html.escape(content)
         
-        html_content += terminal_content
+        html_content += terminal_content.lstrip()  # Remove any leading whitespace from the entire terminal content
         
         html_content += """</pre>
         """
