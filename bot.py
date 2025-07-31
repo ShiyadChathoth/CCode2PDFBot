@@ -208,7 +208,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                         'timestamp': datetime.datetime.now()
                     })
                     await update.message.reply_text("Program execution completed.")
-                    await generate_and_send_pdf(update, context)
+                    await generate_and_send_pdf(update, context, title="Program Execution Log")
                     break
                 else:
                     # No output seen, just wait a bit more
@@ -292,7 +292,7 @@ async def read_process_output(update: Update, context: CallbackContext):
                 'timestamp': datetime.datetime.now()
             })
             await update.message.reply_text("Program execution completed.")
-            await generate_and_send_pdf(update, context)
+            await generate_and_send_pdf(update, context, title="Program Execution Log")
             break
 
 def process_output_chunk(context, buffer, update):
@@ -360,7 +360,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await process.stdin.drain()
         process.stdin.close()
         await process.wait()
-        await generate_and_send_pdf(update, context)
+        await generate_and_send_pdf(update, context, title="Program Execution Log")
         return ConversationHandler.END
     
     # Add user input to execution log
@@ -388,7 +388,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     
     return RUNNING
 
-async def generate_and_send_pdf(update: Update, context: CallbackContext):
+async def generate_and_send_pdf(update: Update, context: CallbackContext, title: str = "Execution Log"):
     try:
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
@@ -414,7 +414,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>C Program Execution Report</title>
+                        <title>{title} - C Program Execution Report</title>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
@@ -447,7 +447,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             </style>
         </head>
         <body>
-            <h1>C Program Execution Report</h1>
+            <h1>{title}</h1>
             
             <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
