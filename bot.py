@@ -108,16 +108,16 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     context.user_data['terminal_log'] = # Fixed: Initialized as empty list
     context.user_data['program_completed'] = False
     context.user_data['last_prompt'] = ""
-    context.user_data['pending_messages'] =  # Fixed: Initialized as empty list
+    context.user_data['pending_messages'] = # Fixed: Initialized as empty list
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
-    context.user_data['all_prompts'] =  # Fixed: Initialized as empty list
+    context.user_data['all_prompts'] = # Fixed: Initialized as empty list
     context.user_data['final_output_captured'] = False  # Flag to track if final output has been captured
     
     # NEW: Use a completely different approach for terminal simulation
     # Instead of appending to a list that can get duplicates, use a dictionary with unique keys
     context.user_data['terminal_entries'] = {}  # Dictionary to store terminal entries with unique keys
-    context.user_data['entry_order'] =  # Fixed: Initialized as empty list
+    context.user_data['entry_order'] = # Fixed: Initialized as empty list
     context.user_data['execution_session'] = str(time.time())  # Unique identifier for this execution session
     
     # NEW: Track seen content to prevent exact duplicates
@@ -327,7 +327,7 @@ def add_output_capture_delay(code):
 
 def extract_input_statements(code):
     """Extract potential input prompt patterns from Python code."""
-    input_patterns =
+    input_patterns = # Fixed: Initialized as empty list
     pattern = r'input\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
     input_matches = re.finditer(pattern, code)
     
@@ -526,7 +526,7 @@ async def ensure_all_prompts_captured(context):
     """Ensure all detected prompts are captured in the terminal entries"""
     try:
         # Get all prompts
-        all_prompts = context.user_data.get('all_prompts',)
+        all_prompts = context.user_data.get('all_prompts',) # Fixed: Initialized as empty list
         
         # Add any missing prompts to the terminal entries
         for i, prompt in enumerate(all_prompts):
@@ -585,7 +585,7 @@ async def ensure_final_output_captured(context):
         
         # Get all terminal entries
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order',)
+        entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
         
         # Check the last few entries for success messages that might have been missed
         checked_entries = 0
@@ -790,13 +790,13 @@ def post_process_terminal_entries(context):
     try:
         # Get all terminal entries and their order
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order',)
+        entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
         
         if not terminal_entries or not entry_order:
             return
         
         # Create a new list to store the filtered entry order
-        filtered_order =
+        filtered_order = # Fixed: Initialized as empty list
         
         # Track content we've seen to detect duplicates
         seen_content = {}  # Map content to entry key
@@ -856,18 +856,17 @@ def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace with improved prompt detection."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    # input_patterns is Python-specific, but detect_prompt is now more generic
     patterns = context.user_data.get('input_patterns',) # Fixed: Initialized as empty list
     stats = context.user_data.get('activity_stats', {})
     
     # First check if the entire buffer might be a prompt without a newline
     if buffer and not buffer.endswith('\n'):
-        is_prompt, prompt_text = detect_prompt(buffer) # Removed patterns argument
+        is_prompt, prompt_text = detect_prompt(buffer, patterns)
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
             
             # Add to all_prompts list for final capture
-            all_prompts = context.user_data.get('all_prompts',)
+            all_prompts = context.user_data.get('all_prompts',) # Fixed: Initialized as empty list
             if prompt_text not in all_prompts:
                 all_prompts.append(prompt_text)
                 context.user_data['all_prompts'] = all_prompts
@@ -910,7 +909,7 @@ def process_output_chunk(context, buffer, update):
             output.append(line_stripped)
             
             # Enhanced prompt detection
-            is_prompt, prompt_text = detect_prompt(line_stripped) # Removed patterns argument
+            is_prompt, prompt_text = detect_prompt(line_stripped, patterns)
             
             # Check for success messages that might be final output
             is_success_message = detect_success_message(line_stripped)
@@ -920,7 +919,7 @@ def process_output_chunk(context, buffer, update):
                 context.user_data['waiting_for_input'] = True
                 
                 # Add to all_prompts list for final capture
-                all_prompts = context.user_data.get('all_prompts',)
+                all_prompts = context.user_data.get('all_prompts',) # Fixed: Initialized as empty list
                 if prompt_text not in all_prompts:
                     all_prompts.append(prompt_text)
                     context.user_data['all_prompts'] = all_prompts
@@ -964,9 +963,26 @@ def detect_success_message(line):
     
     return any(pattern in line.lower() for pattern in success_patterns)
 
-def detect_prompt(line): # Removed patterns argument as it's Python-specific
+def detect_prompt(line, patterns):
     """Enhanced detection for prompts. Returns (is_prompt, prompt_text)"""
     line_text = line.strip()
+    
+    # First check if the line matches or closely matches any extracted patterns
+    for pattern in patterns:
+        # Direct match
+        if pattern in line_text:
+            return True, line_text
+        
+        # Fuzzy match - check if most of the pattern appears in the line
+        # This helps with format specifiers that have been replaced with actual values
+        pattern_words = set(re.findall(r'\w+', pattern))
+        line_words = set(re.findall(r'\w+', line_text))
+        common_words = pattern_words.intersection(line_words)
+        
+        # If we have a significant match and the pattern ends with a prompt character
+        if (len(common_words) >= len(pattern_words) * 0.6 or 
+            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>', ' ')))) and len(pattern_words) > 0:
+            return True, line_text
     
     # Input keywords check
     input_keywords = ['enter', 'input', 'type', 'provide', 'give', 'value', 'values']
@@ -976,7 +992,7 @@ def detect_prompt(line): # Removed patterns argument as it's Python-specific
         if keyword in line_lower:
             return True, line_text
     
-    # Check for ending with common prompt characters - added space as a prompt character
+    # Check for ending with prompt characters - added space as a prompt character
     if line_text.rstrip().endswith((':', '?', '>', ' ')):
         return True, line_text
     
@@ -989,8 +1005,7 @@ def detect_prompt(line): # Removed patterns argument as it's Python-specific
         return True, line_text
     
     # Additional check for very short outputs that might be prompts
-    # This is a heuristic and might have false positives
-    if len(line_text) < 10 and not line_text.isdigit() and not line_text.isalpha():
+    if len(line_text) < 10 and not line_text.isdigit():
         return True, line_text
     
     # If none of the above, this is probably not a prompt
@@ -1153,7 +1168,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
 
         # Get terminal entries in order
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order',)
+        entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
         
         # HARDCODED FIX: Final manual check for "Please enter a valid number" duplicates
         # This is a last resort to ensure no duplicates make it to the PDF
@@ -1182,14 +1197,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 0;
                     background-color: #FFFFFF;
                 }}
-              .program-title {{
+            .program-title {{
                     font-size: 24px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
                     font-family: Arial, sans-serif;
                 }}
-              .code-section {{
+            .code-section {{
                     margin-bottom: 20px;
                     border: 1px solid #ddd;
                     padding: 10px;
@@ -1200,7 +1215,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     line-height: 1.3;
                     overflow-x: auto;
                 }}
-              .terminal {{
+            .terminal {{
                     background-color: #FFFFFF;
                     color: #000000;
                     padding: 10px;
@@ -1210,20 +1225,20 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre-wrap;
                     border: 1px solid #ddd;
                 }}
-              .prompt {{
+            .prompt {{
                     color: #0000FF;
                 }}
-              .input {{
+            .input {{
                     color: #008800;
                     font-weight: bold;
                 }}
-              .output {{
+            .output {{
                     color: #000000;
                 }}
-              .error {{
+            .error {{
                     color: #FF0000;
                 }}
-              .system {{
+            .system {{
                     color: #888888;
                     font-style: italic;
                 }}
@@ -1251,7 +1266,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Check if wkhtmltopdf is installed (redundant if Dockerfile/Nixpacks handle it, but kept as fallback)
+        # Check if wkhtmltopdf is installed
         try:
             wkhtmltopdf_check = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
             if wkhtmltopdf_check.returncode!= 0:
@@ -1439,3 +1454,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
