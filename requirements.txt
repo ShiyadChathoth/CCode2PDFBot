@@ -1,4 +1,4 @@
-python-telegram-bot==20.7
+python-telegram-bot==22.3
 asyncio
 pdfkit
 psutil==5.9.5
