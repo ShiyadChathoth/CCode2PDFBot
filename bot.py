@@ -18,6 +18,7 @@ import time
 import datetime
 import re
 import unicodedata
+from markdown_pdf import MarkdownPdf, Section
 
 # Set up logging
 logging.basicConfig(
@@ -437,10 +438,10 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             f.write(markdown_report)
 
         # Convert Markdown to PDF
-        report_filename_pdf = "execution_report.pdf"
-        subprocess.run(["manus-md-to-pdf", report_filename_md, report_filename_pdf], check=True)
-
-        # Send the PDF to the user
+        report_filenam        # Convert Markdown to PDF using markdown-pdf
+        pdf = MarkdownPdf(toc_level=2, optimize=True)
+        pdf.add_section(Section(markdown_report))
+        pdf.save(report_filename_pdf)      # Send the PDF to the user
         await update.message.reply_document(document=open(report_filename_pdf, 'rb'))
 
         # Clean up temporary files
