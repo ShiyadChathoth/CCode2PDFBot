@@ -438,7 +438,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             f.write(markdown_report)
 
         # Convert Markdown to PDF
-        report_filenam        # Convert Markdown to PDF using markdown-pdf
+        report_filename_pdf = "execution_report.pdf"
         pdf = MarkdownPdf(toc_level=2, optimize=True)
         pdf.add_section(Section(markdown_report))
         pdf.save(report_filename_pdf)      # Send the PDF to the user
