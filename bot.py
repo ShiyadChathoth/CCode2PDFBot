@@ -33,7 +33,7 @@ if not TOKEN:
     raise ValueError("No TOKEN provided in environment variables!")
 
 # States for ConversationHandler
-CODE, TITLE_INPUT, RUNNING = range(3)
+CODE, RUNNING = range(2)
 
 async def start(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(
@@ -91,8 +91,19 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                 'timestamp': datetime.datetime.now()
             })
             
-            await update.message.reply_text("Code compiled successfully! Please provide a title for the PDF report.")
-            return TITLE_INPUT
+            process = await asyncio.create_subprocess_exec(
+                "stdbuf", "-o0", "./temp",
+                stdin=PIPE,
+                stdout=PIPE,
+                stderr=PIPE
+            )
+            
+            context.user_data['process'] = process
+            await update.message.reply_text("Code compiled successfully! Running now...")
+            
+            # Start monitoring process output without immediately asking for input
+            asyncio.create_task(read_process_output(update, context))
+            return RUNNING
         else:
             # Check if there are still whitespace errors after cleaning
             if "stray" in compile_result.stderr and "\\302" in compile_result.stderr:
@@ -112,8 +123,19 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
                         'timestamp': datetime.datetime.now()
                     })
                     
-                    await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Please provide a title for the PDF report.")
-                    return TITLE_INPUT
+                    process = await asyncio.create_subprocess_exec(
+                        "stdbuf", "-o0", "./temp",
+                        stdin=PIPE,
+                        stdout=PIPE,
+                        stderr=PIPE
+                    )
+                    
+                    context.user_data['process'] = process
+                    await update.message.reply_text("Code compiled successfully after fixing whitespace issues! Running now...")
+                    
+                    # Start monitoring process output without immediately asking for input
+                    asyncio.create_task(read_process_output(update, context))
+                    return RUNNING
             
             # Add compilation error to execution log
             context.user_data['execution_log'].append({
@@ -136,24 +158,6 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
     except Exception as e:
         await update.message.reply_text(f"An error occurred: {str(e)}")
         return ConversationHandler.END
-
-async def handle_title_input(update: Update, context: CallbackContext) -> int:
-    pdf_title = update.message.text
-    context.user_data['pdf_title'] = pdf_title
-    
-    process = await asyncio.create_subprocess_exec(
-        "stdbuf", "-o0", "./temp",
-        stdin=PIPE,
-        stdout=PIPE,
-        stderr=PIPE
-    )
-    
-    context.user_data['process'] = process
-    await update.message.reply_text(f"PDF title set to '{pdf_title}'. Running code now...")
-    
-    # Start monitoring process output without immediately asking for input
-    asyncio.create_task(read_process_output(update, context))
-    return RUNNING
 
 async def read_process_output(update: Update, context: CallbackContext):
     process = context.user_data['process']
@@ -316,7 +320,7 @@ def process_output_chunk(context, buffer, update):
             # 2. Words like "Enter", "Input", "Type" followed by any text
             # 3. Phrases asking for input without proper spacing
             is_prompt = (
-                line_stripped.rstrip().endswith((':', '>', '?')) or
+                line_stripped.rstrip().endswith((':','>','?')) or
                 re.search(r'(Enter|Input|Type|Provide|Give)(\s|\w)*', line_stripped, re.IGNORECASE) or
                 "number" in line_stripped.lower()
             )
@@ -389,7 +393,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         code = context.user_data['code']
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
-        pdf_title = context.user_data.get('pdf_title', 'C Program Execution Report') # Get title or use default
         
         # Sort execution log by timestamp to ensure correct order
         execution_log.sort(key=lambda x: x['timestamp'])
@@ -410,8 +413,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         <!DOCTYPE html>
         <html>
         <head>
-            <meta charset=\"UTF-8\">
-            <title>{html.escape(pdf_title)}</title>
+            <meta charset="UTF-8">
+            <title>C Program Execution Report</title>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
@@ -421,7 +424,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 .output {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #3498db; margin: 10px 0; white-space: pre-wrap; }}
                 .prompt {{ background-color: #e8f4f8; padding: 10px; border-left: 4px solid #9b59b6; margin: 10px 0; white-space: pre-wrap; }}
                 .input {{ background-color: #f0f7e6; padding: 10px; border-left: 4px solid #27ae60; margin: 10px 0; white-space: pre-wrap; }}
-                .error {{ background-color: #fae5e5; padding: 10px; border-left: 4_px solid #e74c3c; margin: 10px 0; white-space: pre-wrap; }}
+                .error {{ background-color: #fae5e5; padding: 10px; border-left: 4px solid #e74c3c; margin: 10px 0; white-space: pre-wrap; }}
                 .system {{ background-color: #f5f5f5; padding: 10px; border-left: 4px solid #7f8c8d; margin: 10px 0; white-space: pre-wrap; }}
                 .execution-flow {{ margin-top: 20px; }}
                 .timestamp {{ color: #7f8c8d; font-size: 0.8em; }}
@@ -444,13 +447,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             </style>
         </head>
         <body>
-            <h1>{html.escape(pdf_title)}</h1>
+            <h1>C Program Execution Report</h1>
             
             <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
             
             <h2>Terminal View</h2>
-            <pre class=\"terminal\">"""
+            <pre class="terminal">"""
         
         # Create a clean terminal view that focuses on program prompts and user inputs
         terminal_content = ""
@@ -463,7 +466,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
             for line in lines:
                 if line.strip():  # Only process non-empty lines
                     # Add a consistent indentation to each line
-                    terminal_content += f'\n<span class=\"terminal-line\">  {html.escape(line)}</span>'
+                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
                 else:
                     terminal_content += html.escape(line)
         
@@ -476,12 +479,12 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         if filtered_execution_log:
             html_content += """
             <h2>System Messages</h2>
-            <div class=\"execution-flow\">
+            <div class="execution-flow">
             """
             
             for entry in filtered_execution_log:
                 timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
-                html_content += f'\n<div class=\"system\"><span class=\"timestamp\">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
+                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
             
             html_content += """
             </div>
@@ -534,6 +537,29 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     finally:
         await cleanup(context)
 
+async def cleanup(context: CallbackContext):
+    process = context.user_data.get('process')
+    if process and process.returncode is None:
+        try:
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+        except Exception as e:
+            logger.error(f"Error during process cleanup: {str(e)}")
+    
+    # Clean up temporary files
+    for file in ["temp.c", "temp", "output.pdf", "output.html"]:
+        if os.path.exists(file):
+            try:
+                os.remove(file)
+            except Exception as e:
+                logger.error(f"Error removing file {file}: {str(e)}")
+    
+    context.user_data.clear()
+
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled.")
     await cleanup(context)
@@ -549,7 +575,6 @@ def main() -> None:
             entry_points=[CommandHandler('start', start)],
             states={
                 CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
-                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
                 RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
             },
             fallbacks=[CommandHandler('cancel', cancel)],
@@ -572,4 +597,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
