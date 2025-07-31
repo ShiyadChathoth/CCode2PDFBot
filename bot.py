@@ -38,8 +38,7 @@ CODE, RUNNING, ASK_TITLE = range(3)
 async def start(update: Update, context: CallbackContext) -> int:
     """Starts the conversation and asks for C code."""
     await update.message.reply_text(
-        'Hi! Send me your C code, and I will compile and execute it step-by-step.\n\n'
-        'You can use /cancel at any time to stop the current operation.'
+        'Hi! Send me your C code, and I will compile and execute it step-by-step.'
     )
     return CODE
 
@@ -87,6 +86,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
             )
             context.user_data['process'] = process
             await update.message.reply_text("Code compiled successfully! Running now...")
+            # Directly call the function to handle the running process
             return await handle_running_logic(update, context)
         else:
             error_message = compile_result.stderr
@@ -102,6 +102,7 @@ async def read_from_stream(stream):
     buffer = b''
     while True:
         try:
+            # Read with a very short timeout to avoid blocking
             chunk = await asyncio.wait_for(stream.read(1024), timeout=0.1)
             if not chunk:
                 break
@@ -114,16 +115,19 @@ async def handle_running_logic(update: Update, context: CallbackContext):
     """Manages the I/O loop for the running C program."""
     process = context.user_data['process']
 
+    # Initial read of output before asking for any input
     output = await read_from_stream(process.stdout)
     if output:
         await update.message.reply_text(f"Program output:\n{output}")
         context.user_data['terminal_log'].append({'type': 'output', 'content': output, 'timestamp': datetime.datetime.now()})
 
+    # Check if the process has already terminated
     if process.returncode is not None:
         await update.message.reply_text("Program execution completed.")
         return await ask_for_title(update, context)
 
-    await update.message.reply_text("Please provide input, or type 'done' to finish.\n(You can also use /cancel to stop.)")
+    # If the process is still running, it's likely waiting for input
+    await update.message.reply_text("Please provide input, or type 'done' to finish.")
     return RUNNING
 
 
@@ -143,6 +147,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text("Program terminated by user.")
         return await ask_for_title(update, context)
 
+    # Log and send the user's input
     context.user_data['terminal_log'].append({
         'type': 'input', 'content': user_input + "\n",
         'timestamp': datetime.datetime.now()
@@ -151,6 +156,7 @@ async def handle_running(update: Update, context: CallbackContext) -> int:
     await process.stdin.drain()
     await update.message.reply_text(f"Input sent: {user_input}")
 
+    # After sending input, immediately try to read the next batch of output
     return await handle_running_logic(update, context)
 
 
@@ -171,8 +177,21 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
 
+        # Sort execution log by timestamp to ensure correct order
+        execution_log.sort(key=lambda x: x['timestamp'])
         terminal_log.sort(key=lambda x: x['timestamp'])
 
+        # Filter execution log to keep only compilation success and program completion messages
+        filtered_execution_log = [
+            entry for entry in execution_log
+            if entry['type'] == 'system' and (
+                entry['message'] == 'Code compiled successfully!' or
+                entry['message'] == 'Code compiled successfully after aggressive whitespace cleaning!' or
+                entry['message'] == 'Program execution completed.'
+            )
+        ]
+
+        # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -186,62 +205,106 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
                 pre {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }}
                 code {{ font-family: Consolas, Monaco, 'Andale Mono', monospace; }}
                 .terminal {{
-                    background-color: #2b2b2b; color: #f8f8f2; padding: 20px;
-                    border-radius: 5px; font-family: monospace; white-space: pre;
-                    line-height: 1.5; margin: 0; padding-left: 0;
+                    background-color: #2b2b2b;
+                    color: #f8f8f2;
+                    padding: 20px;
+                    border-radius: 5px;
+                    font-family: monospace;
+                    white-space: pre;
+                    line-height: 1.5;
+                    margin: 0;
+                    padding-left: 0;
                 }}
-                .terminal-line {{ margin: 0; padding-left: 10px; }}
+                .terminal-line {{
+                    margin: 0;
+                    padding-left: 10px;  /* Add consistent indentation to each line */
+                }}
             </style>
         </head>
         <body>
             <h1>{html.escape(title)}</h1>
+
             <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
+
             <h2>Terminal View</h2>
             <pre class="terminal">"""
 
-        terminal_content = "".join(
-            f'<span class="terminal-line">  {html.escape(entry["content"])}</span>'
-            for entry in terminal_log
-        )
+        # Create a clean terminal view that focuses on program prompts and user inputs
+        terminal_content = ""
+        for entry in terminal_log:
+            entry_type = entry['type']
+            content = entry['content']
+
+            # Process the content line by line to add indentation to each line
+            lines = content.splitlines(True)  # Keep line endings
+            for line in lines:
+                if line.strip():  # Only process non-empty lines
+                    # Add a consistent indentation to each line
+                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
+                else:
+                    terminal_content += html.escape(line)
 
         html_content += terminal_content
-        html_content += "</pre></body></html>"
+
+        html_content += """</pre>
+        """
+
+        # Add only the system messages for compilation success and program completion
+        if filtered_execution_log:
+            html_content += """
+            <h2>System Messages</h2>
+            """
+
+            for entry in filtered_execution_log:
+                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
+
+
+        html_content += """
+        </body>
+        </html>
+        """
 
         with open("output.html", "w") as file:
             file.write(html_content)
 
+        # Generate PDF with wkhtmltopdf
         pdf_process = subprocess.run(
             ["wkhtmltopdf", "--enable-local-file-access", "output.html", "output.pdf"],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True
         )
 
         if pdf_process.returncode != 0:
             logger.error(f"PDF generation failed: {pdf_process.stderr}")
-            await update.message.reply_text("Failed to generate PDF. Sending HTML instead.")
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=open('output.html', 'rb'),
-                filename="program_execution.html"
-            )
+            await update.message.reply_text("Failed to generate PDF report. Sending HTML instead.")
+            with open('output.html', 'rb') as html_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=html_file,
+                    filename="program_execution.html"
+                )
         else:
+            # Send both PDF and HTML for maximum compatibility
             await update.message.reply_text("Generating execution report...")
-            pdf_filename = f"{title.replace(' ', '_').lower()}.pdf"
-            html_filename = f"{title.replace(' ', '_').lower()}.html"
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=open('output.pdf', 'rb'),
-                filename=pdf_filename
-            )
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=open('output.html', 'rb'),
-                filename=html_filename
-            )
+            with open('output.pdf', 'rb') as pdf_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=pdf_file,
+                    filename=f"{title.replace(' ', '_').lower()}.pdf"
+                )
+
+            with open('output.html', 'rb') as html_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=html_file,
+                    filename=f"{title.replace(' ', '_').lower()}.html"
+                )
 
     except Exception as e:
-        logger.error(f"Error in PDF generation: {e}")
-        await update.message.reply_text(f"Failed to generate report: {e}")
+        logger.error(f"Error in PDF generation: {str(e)}")
+        await update.message.reply_text(f"Failed to generate report: {str(e)}")
     finally:
         await cleanup(context)
 
@@ -265,7 +328,7 @@ async def cleanup(context: CallbackContext):
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels the current operation."""
-    await update.message.reply_text("Operation cancelled.\nType /start to begin a new session.")
+    await update.message.reply_text("Operation cancelled.")
     await cleanup(context)
     return ConversationHandler.END
 
@@ -287,7 +350,7 @@ def main() -> None:
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
     except telegram.error.Conflict:
-        logger.error("Conflict error. Another bot instance is running.")
+        logger.error("Conflict error. Another bot instance is already running.")
         print("Error: Another instance of the bot is already running. Please stop it and try again.")
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
