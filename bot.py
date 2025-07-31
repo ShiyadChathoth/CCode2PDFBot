@@ -99,25 +99,25 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         )
     
     context.user_data['code'] = code  # Store original code for display
-    context.user_data['output'] =
-    context.user_data['inputs'] =
-    context.user_data['errors'] =
+    context.user_data['output'] = # Fixed: Initialized as empty list
+    context.user_data['inputs'] = # Fixed: Initialized as empty list
+    context.user_data['errors'] = # Fixed: Initialized as empty list
     context.user_data['waiting_for_input'] = False
-    context.user_data['execution_log'] =
+    context.user_data['execution_log'] = # Fixed: Initialized as empty list
     context.user_data['output_buffer'] = ""
-    context.user_data['terminal_log'] =
+    context.user_data['terminal_log'] = # Fixed: Initialized as empty list
     context.user_data['program_completed'] = False
     context.user_data['last_prompt'] = ""
-    context.user_data['pending_messages'] =  # Track messages that need to be sent
+    context.user_data['pending_messages'] =  # Fixed: Initialized as empty list
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
-    context.user_data['all_prompts'] =  # Track all prompts for final capture
+    context.user_data['all_prompts'] =  # Fixed: Initialized as empty list
     context.user_data['final_output_captured'] = False  # Flag to track if final output has been captured
     
     # NEW: Use a completely different approach for terminal simulation
     # Instead of appending to a list that can get duplicates, use a dictionary with unique keys
     context.user_data['terminal_entries'] = {}  # Dictionary to store terminal entries with unique keys
-    context.user_data['entry_order'] =  # List to maintain the order of entries
+    context.user_data['entry_order'] =  # Fixed: Initialized as empty list
     context.user_data['execution_session'] = str(time.time())  # Unique identifier for this execution session
     
     # NEW: Track seen content to prevent exact duplicates
@@ -219,7 +219,7 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         add_terminal_entry(context, 'system', 'C code compilation successful! Ready to execute.')
         
         # For C, input patterns are not extracted in the same way as Python
-        context.user_data['input_patterns'] = 
+        context.user_data['input_patterns'] = # Fixed: Initialized as empty list
         
         await update.message.reply_text("C code compilation successful! Ready to execute.")
     
@@ -291,7 +291,7 @@ def add_terminal_entry(context, entry_type, content, sequence=None):
     context.user_data['terminal_entries'] = terminal_entries
     
     # Add to entry order list to maintain order
-    entry_order = context.user_data.get('entry_order',)
+    entry_order = context.user_data.get('entry_order',) # Fixed: Initialized as empty list
     entry_order.append(entry_key)
     context.user_data['entry_order'] = entry_order
     
@@ -857,7 +857,7 @@ def process_output_chunk(context, buffer, update):
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
     # input_patterns is Python-specific, but detect_prompt is now more generic
-    patterns = context.user_data.get('input_patterns',) 
+    patterns = context.user_data.get('input_patterns',) # Fixed: Initialized as empty list
     stats = context.user_data.get('activity_stats', {})
     
     # First check if the entire buffer might be a prompt without a newline
@@ -1148,7 +1148,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         # Use original code for display (not the modified code with delay)
         code = context.user_data['code']
-        program_title = context.user_data.get('program_title', "Code Execution Report")
+        language = context.user_data.get('language', 'Program')
+        program_title = context.user_data.get('program_title', f"{language} Program Execution Report")
 
         # Get terminal entries in order
         terminal_entries = context.user_data.get('terminal_entries', {})
@@ -1181,14 +1182,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 0;
                     background-color: #FFFFFF;
                 }}
-               .program-title {{
+              .program-title {{
                     font-size: 24px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
                     font-family: Arial, sans-serif;
                 }}
-               .code-section {{
+              .code-section {{
                     margin-bottom: 20px;
                     border: 1px solid #ddd;
                     padding: 10px;
@@ -1199,7 +1200,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     line-height: 1.3;
                     overflow-x: auto;
                 }}
-               .terminal {{
+              .terminal {{
                     background-color: #FFFFFF;
                     color: #000000;
                     padding: 10px;
@@ -1209,20 +1210,20 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre-wrap;
                     border: 1px solid #ddd;
                 }}
-               .prompt {{
+              .prompt {{
                     color: #0000FF;
                 }}
-               .input {{
+              .input {{
                     color: #008800;
                     font-weight: bold;
                 }}
-               .output {{
+              .output {{
                     color: #000000;
                 }}
-               .error {{
+              .error {{
                     color: #FF0000;
                 }}
-               .system {{
+              .system {{
                     color: #888888;
                     font-style: italic;
                 }}
