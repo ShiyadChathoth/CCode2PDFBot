@@ -171,69 +171,140 @@ async def receive_title(update: Update, context: CallbackContext) -> int:
     await generate_and_send_pdf(update, context, title)
     return ConversationHandler.END
 
-async def generate_and_send_pdf(update: Update, context: CallbackContext, title: str):
-    """Generates and sends the PDF and HTML execution reports."""
+async def generate_and_send_pdf(update: Update, context: CallbackContext, title: str = "Execution Log"):
     try:
         code = context.user_data['code']
-        terminal_log = sorted(context.user_data.get('terminal_log', []), key=lambda x: x['timestamp'])
+        execution_log = context.user_data['execution_log']
+        terminal_log = context.user_data['terminal_log']
 
-        # Build the terminal view content
-        terminal_content = ""
-        for entry in terminal_log:
-            content_type = entry['type']
-            escaped_content = html.escape(entry['content'])
-            if content_type == 'input':
-                terminal_content += f"<strong><pre>> {escaped_content}</pre></strong>"
-            else:
-                terminal_content += f"<pre>{escaped_content}</pre>"
-        
+        # Sort execution log by timestamp to ensure correct order
+        execution_log.sort(key=lambda x: x['timestamp'])
+        terminal_log.sort(key=lambda x: x['timestamp'])
+
+        # Filter execution log to keep only compilation success and program completion messages
+        filtered_execution_log = [
+            entry for entry in execution_log
+            if entry['type'] == 'system' and (
+                entry['message'] == 'Code compiled successfully!' or
+                entry['message'] == 'Code compiled successfully after aggressive whitespace cleaning!' or
+                entry['message'] == 'Program execution completed.'
+            )
+        ]
+
+        # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>{html.escape(title)} - C Program Execution Report</title>
+                        <title>{title} - C Program Execution Report</title>
             <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 20px; line-height: 1.6; }}
-                h1, h2 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
-                pre {{ background-color: #f4f4f4; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }}
-                code {{ font-family: "Courier New", Courier, monospace; }}
-                .terminal {{ background-color: #2b2b2b; color: #f8f8f2; padding: 20px; border-radius: 8px; }}
-                .terminal strong pre {{ color: #2ecc71; }} /* Green for input */
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+                h2 {{ color: #3498db; margin-top: 20px; }}
+                pre {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }}
+                code {{ font-family: Consolas, Monaco, 'Andale Mono', monospace; }}
+                .terminal {{
+                    background-color: #2b2b2b;
+                    color: #f8f8f2;
+                    padding: 20px;
+                    border-radius: 5px;
+                    font-family: monospace;
+                    white-space: pre;
+                    line-height: 1.5;
+                    margin: 0;
+                    padding-left: 0;
+                }}
+                .terminal-line {{
+                    margin: 0;
+                    padding-left: 10px;  /* Add consistent indentation to each line */
+                }}
             </style>
         </head>
         <body>
             <h1>{html.escape(title)}</h1>
+
             <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
-            <h2>Execution Log</h2>
-            <div class="terminal">{terminal_content}</div>
+
+            <h2>Terminal View</h2>
+            <pre class="terminal">"""
+
+        # Create a clean terminal view that focuses on program prompts and user inputs
+        terminal_content = ""
+        for entry in terminal_log:
+            entry_type = entry['type']
+            content = entry['content']
+
+            # Process the content line by line to add indentation to each line
+            lines = content.splitlines(True)  # Keep line endings
+            for line in lines:
+                if line.strip():  # Only process non-empty lines
+                    # Add a consistent indentation to each line
+                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
+                else:
+                    terminal_content += html.escape(line)
+
+        html_content += terminal_content
+
+        html_content += """</pre>
+        """
+
+        # Add only the system messages for compilation success and program completion
+        if filtered_execution_log:
+            html_content += """
+            <h2>System Messages</h2>
+            """
+
+            for entry in filtered_execution_log:
+                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
+                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
+
+
+        html_content += """
         </body>
         </html>
         """
-        
+
         with open("output.html", "w") as file:
             file.write(html_content)
 
+        # Generate PDF with wkhtmltopdf
         pdf_process = subprocess.run(
             ["wkhtmltopdf", "--enable-local-file-access", "output.html", "output.pdf"],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True
         )
 
         if pdf_process.returncode != 0:
             logger.error(f"PDF generation failed: {pdf_process.stderr}")
-            await update.message.reply_text("Failed to generate PDF. Sending HTML instead.")
-            await context.bot.send_document(update.effective_chat.id, document=open('output.html', 'rb'), filename="execution_report.html")
+            await update.message.reply_text("Failed to generate PDF report. Sending HTML instead.")
+            with open('output.html', 'rb') as html_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=html_file,
+                    filename="program_execution.html"
+                )
         else:
+            # Send both PDF and HTML for maximum compatibility
             await update.message.reply_text("Generating execution report...")
-            pdf_filename = f"{title.replace(' ', '_').lower()}.pdf"
-            html_filename = f"{title.replace(' ', '_').lower()}.html"
-            await context.bot.send_document(update.effective_chat.id, document=open('output.pdf', 'rb'), filename=pdf_filename)
-            await context.bot.send_document(update.effective_chat.id, document=open('output.html', 'rb'), filename=html_filename)
+            with open('output.pdf', 'rb') as pdf_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=pdf_file,
+                    filename=f"{title.replace(' ', '_').lower()}.pdf"
+                )
+
+            with open('output.html', 'rb') as html_file:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=html_file,
+                    filename=f"{title.replace(' ', '_').lower()}.html"
+                )
 
     except Exception as e:
-        logger.error(f"Error in report generation: {e}")
-        await update.message.reply_text(f"Failed to generate report: {e}")
+        logger.error(f"Error in PDF generation: {str(e)}")
+        await update.message.reply_text(f"Failed to generate report: {str(e)}")
     finally:
         await cleanup(context)
 
@@ -248,11 +319,11 @@ async def cleanup(context: CallbackContext):
             logger.warning(f"Could not terminate process gracefully, killing. Reason: {e}")
             if process.returncode is None:
                 process.kill()
-    
+
     for file in ["temp.c", "temp", "output.pdf", "output.html"]:
         if os.path.exists(file):
             os.remove(file)
-            
+
     context.user_data.clear()
 
 async def cancel(update: Update, context: CallbackContext) -> int:
@@ -277,7 +348,7 @@ def main() -> None:
         application.add_handler(conv_handler)
         logger.info("Bot is starting...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
-        
+
     except telegram.error.Conflict:
         logger.error("Conflict error. Another bot instance is already running.")
         print("Error: Another instance of the bot is already running. Please stop it and try again.")
