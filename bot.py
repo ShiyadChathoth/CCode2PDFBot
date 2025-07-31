@@ -57,11 +57,11 @@ async def start(update: Update, context: CallbackContext) -> int:
     # Clear any previous state
     context.user_data.clear()
     
-    keyboard = [['Python']]  # Simplified to only Python for now
+    keyboard = [['Python'], ['C']]  # Added 'C' option
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     
     await update.message.reply_text(
-        'Hi! I can execute Python code and generate a PDF report of the execution.',
+        'Hi! I can execute Python or C code and generate a PDF report of the execution.',
         reply_markup=reply_markup
     )
     return LANGUAGE_CHOICE
@@ -69,14 +69,14 @@ async def start(update: Update, context: CallbackContext) -> int:
 async def language_choice(update: Update, context: CallbackContext) -> int:
     language = update.message.text
     
-    if language != 'Python':
-        await update.message.reply_text('Currently only Python is supported. Please select Python.')
+    if language not in ['Python', 'C']: # Allow both Python and C
+        await update.message.reply_text('Currently only Python and C are supported. Please select one.')
         return LANGUAGE_CHOICE
     
     context.user_data['language'] = language
     
     await update.message.reply_text(
-        'You selected Python. Please send me your Python code, and I will execute it.'
+        f'You selected {language}. Please send me your {language} code, and I will execute it.'
     )
     return CODE
 
@@ -84,43 +84,40 @@ def clean_whitespace(code):
     """Clean non-standard whitespace characters from code."""
     cleaned_code = code.replace('\u00A0', ' ')
     for char in code:
-        if unicodedata.category(char).startswith('Z') and char != ' ':
+        if unicodedata.category(char).startswith('Z') and char!= ' ':
             cleaned_code = cleaned_code.replace(char, ' ')
     return cleaned_code
 
 async def handle_code(update: Update, context: CallbackContext) -> int:
     original_code = update.message.text
     code = clean_whitespace(original_code)
+    language = context.user_data['language'] # Get selected language
     
-    if code != original_code:
+    if code!= original_code:
         await update.message.reply_text(
             "⚠️ I detected and fixed non-standard whitespace characters in your code that would cause errors."
         )
     
-    # Modify the code to add a delay after completion to ensure final output is captured
-    modified_code = add_output_capture_delay(code)
-    
     context.user_data['code'] = code  # Store original code for display
-    context.user_data['modified_code'] = modified_code  # Store modified code for execution
-    context.user_data['output'] = []
-    context.user_data['inputs'] = []
-    context.user_data['errors'] = []
+    context.user_data['output'] =
+    context.user_data['inputs'] =
+    context.user_data['errors'] =
     context.user_data['waiting_for_input'] = False
-    context.user_data['execution_log'] = []
+    context.user_data['execution_log'] =
     context.user_data['output_buffer'] = ""
-    context.user_data['terminal_log'] = []
+    context.user_data['terminal_log'] =
     context.user_data['program_completed'] = False
     context.user_data['last_prompt'] = ""
-    context.user_data['pending_messages'] = []  # Track messages that need to be sent
+    context.user_data['pending_messages'] =  # Track messages that need to be sent
     context.user_data['output_complete'] = False  # Flag to track when output is complete
     context.user_data['title_requested'] = False  # Flag to track if title has been requested
-    context.user_data['all_prompts'] = []  # Track all prompts for final capture
+    context.user_data['all_prompts'] =  # Track all prompts for final capture
     context.user_data['final_output_captured'] = False  # Flag to track if final output has been captured
     
     # NEW: Use a completely different approach for terminal simulation
     # Instead of appending to a list that can get duplicates, use a dictionary with unique keys
     context.user_data['terminal_entries'] = {}  # Dictionary to store terminal entries with unique keys
-    context.user_data['entry_order'] = []  # List to maintain the order of entries
+    context.user_data['entry_order'] =  # List to maintain the order of entries
     context.user_data['execution_session'] = str(time.time())  # Unique identifier for this execution session
     
     # NEW: Track seen content to prevent exact duplicates
@@ -138,47 +135,96 @@ async def handle_code(update: Update, context: CallbackContext) -> int:
         'is_active': True
     }
     
-    # Check for syntax errors
-    with open("temp.py", "w") as file:
-        file.write(code)  # Use original code for syntax check
-    
-    syntax_check = subprocess.run(
-        ["python3", "-m", "py_compile", "temp.py"], 
-        capture_output=True, 
-        text=True
-    )
-    
-    if syntax_check.returncode != 0:
+    if language == 'Python':
+        # Modify the code to add a delay after completion to ensure final output is captured
+        modified_code = add_output_capture_delay(code)
+        context.user_data['modified_code'] = modified_code  # Store modified code for execution
+        
+        # Check for syntax errors
+        with open("temp.py", "w") as file:
+            file.write(code)  # Use original code for syntax check
+        
+        syntax_check = subprocess.run(
+            ["python3", "-m", "py_compile", "temp.py"], 
+            capture_output=True, 
+            text=True
+        )
+        
+        if syntax_check.returncode!= 0:
+            context.user_data['execution_log'].append({
+                'type': 'error',
+                'message': f"Python Syntax Error:\n{syntax_check.stderr}",
+                'timestamp': datetime.datetime.now()
+            })
+            
+            # Add to terminal entries
+            add_terminal_entry(context, 'system', f"Python Syntax Error:\n{syntax_check.stderr}")
+            
+            await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
+            return ConversationHandler.END
+        
         context.user_data['execution_log'].append({
-            'type': 'error',
-            'message': f"Python Syntax Error:\n{syntax_check.stderr}",
+            'type': 'system',
+            'message': 'Python code validation successful!',
             'timestamp': datetime.datetime.now()
         })
         
         # Add to terminal entries
-        add_terminal_entry(context, 'system', f"Python Syntax Error:\n{syntax_check.stderr}")
+        add_terminal_entry(context, 'system', 'Python code validation successful! Ready to execute.')
         
-        await update.message.reply_text(f"Python Syntax Error:\n{syntax_check.stderr}")
-        return ConversationHandler.END
-    
-    context.user_data['execution_log'].append({
-        'type': 'system',
-        'message': 'Python code validation successful!',
-        'timestamp': datetime.datetime.now()
-    })
-    
-    # Add to terminal entries
-    add_terminal_entry(context, 'system', 'Python code validation successful! Ready to execute.')
-    
-    # Extract input patterns for later use
-    input_patterns = extract_input_statements(code)
-    context.user_data['input_patterns'] = input_patterns
-    logger.info(f"Extracted input patterns: {input_patterns}")
-    
-    await update.message.reply_text("Python code validation successful! Ready to execute.")
+        # Extract input patterns for later use (Python-specific)
+        input_patterns = extract_input_statements(code)
+        context.user_data['input_patterns'] = input_patterns
+        logger.info(f"Extracted input patterns: {input_patterns}")
+        
+        await update.message.reply_text("Python code validation successful! Ready to execute.")
+        
+    elif language == 'C':
+        # For C, no modified_code needed, original code is compiled
+        context.user_data['modified_code'] = code 
+        
+        # Save C code to a temporary.c file
+        with open("temp.c", "w") as file:
+            file.write(code)
+        
+        # Compile C code using gcc
+        compile_result = subprocess.run(
+            ["gcc", "temp.c", "-o", "a.out"], 
+            capture_output=True, 
+            text=True
+        )
+        
+        if compile_result.returncode!= 0:
+            # Compilation failed
+            error_message = f"C Compilation Error:\n{compile_result.stderr}"
+            context.user_data['execution_log'].append({
+                'type': 'error',
+                'message': error_message,
+                'timestamp': datetime.datetime.now()
+            })
+            
+            # Add to terminal entries
+            add_terminal_entry(context, 'error', error_message)
+            
+            await update.message.reply_text(error_message)
+            return ConversationHandler.END
+        
+        context.user_data['execution_log'].append({
+            'type': 'system',
+            'message': 'C code compilation successful! Ready to execute.',
+            'timestamp': datetime.datetime.now()
+        })
+        
+        # Add to terminal entries
+        add_terminal_entry(context, 'system', 'C code compilation successful! Ready to execute.')
+        
+        # For C, input patterns are not extracted in the same way as Python
+        context.user_data['input_patterns'] = 
+        
+        await update.message.reply_text("C code compilation successful! Ready to execute.")
     
     # Use a simpler, more direct approach for execution
-    return await execute_python_directly(update, context)
+    return await execute_program_directly(update, context)
 
 def add_terminal_entry(context, entry_type, content, sequence=None):
     """
@@ -245,14 +291,14 @@ def add_terminal_entry(context, entry_type, content, sequence=None):
     context.user_data['terminal_entries'] = terminal_entries
     
     # Add to entry order list to maintain order
-    entry_order = context.user_data.get('entry_order', [])
+    entry_order = context.user_data.get('entry_order',)
     entry_order.append(entry_key)
     context.user_data['entry_order'] = entry_order
     
     return True
 
 def add_output_capture_delay(code):
-    """Add a delay after program completion to ensure final output is captured"""
+    """Add a delay after program completion to ensure final output is captured (Python-specific)"""
     # Add import for time if not already present
     if "import time" not in code and "from time import" not in code:
         code_lines = code.split('\n')
@@ -281,7 +327,7 @@ def add_output_capture_delay(code):
 
 def extract_input_statements(code):
     """Extract potential input prompt patterns from Python code."""
-    input_patterns = []
+    input_patterns =
     pattern = r'input\s*\(\s*[\"\'](.*?)[\"\'](?:,|\))'
     input_matches = re.finditer(pattern, code)
     
@@ -293,22 +339,30 @@ def extract_input_statements(code):
     
     return input_patterns
 
-async def execute_python_directly(update: Update, context: CallbackContext) -> int:
-    """Execute Python code directly with a simpler approach"""
+async def execute_program_directly(update: Update, context: CallbackContext) -> int:
+    """Execute program (Python or C) directly with a simpler approach"""
     try:
-        # Get the modified code with output capture delay
-        modified_code = context.user_data['modified_code']
+        language = context.user_data['language']
         
-        # Create a simple wrapper script that just runs the code
-        with open("simple_execution.py", "w") as file:
-            file.write(modified_code)
-        
-        # Log that we're about to execute
-        logger.info("Executing Python code directly with output capture delay")
-        
+        if language == 'Python':
+            # Get the modified code with output capture delay
+            modified_code = context.user_data['modified_code']
+            
+            # Create a simple wrapper script that just runs the code
+            with open("simple_execution.py", "w") as file:
+                file.write(modified_code)
+            
+            command = ["python3", "-u", "simple_execution.py"]
+            logger.info("Executing Python code directly with output capture delay")
+            
+        elif language == 'C':
+            # For C, we execute the compiled binary 'a.out'
+            command = ["./a.out"]
+            logger.info("Executing compiled C code:./a.out")
+            
         # Start the process with unbuffered output
         process = await asyncio.create_subprocess_exec(
-            "python3", "-u", "simple_execution.py",
+            *command, # Use *command to unpack the list
             stdin=PIPE,
             stdout=PIPE,
             stderr=PIPE
@@ -328,7 +382,7 @@ async def execute_python_directly(update: Update, context: CallbackContext) -> i
         return RUNNING
         
     except Exception as e:
-        logger.error(f"Error in execute_python_directly: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Error in execute_program_directly: {str(e)}\n{traceback.format_exc()}")
         await update.message.reply_text(f"An error occurred during execution: {str(e)}")
         return ConversationHandler.END
 
@@ -472,7 +526,7 @@ async def ensure_all_prompts_captured(context):
     """Ensure all detected prompts are captured in the terminal entries"""
     try:
         # Get all prompts
-        all_prompts = context.user_data.get('all_prompts', [])
+        all_prompts = context.user_data.get('all_prompts',)
         
         # Add any missing prompts to the terminal entries
         for i, prompt in enumerate(all_prompts):
@@ -531,7 +585,7 @@ async def ensure_final_output_captured(context):
         
         # Get all terminal entries
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order', [])
+        entry_order = context.user_data.get('entry_order',)
         
         # Check the last few entries for success messages that might have been missed
         checked_entries = 0
@@ -551,7 +605,7 @@ async def ensure_final_output_captured(context):
                     logger.info(f"Found potential success message: {content}")
                     
                     # If it's not already marked as output, add it again as output to ensure it's displayed
-                    if entry.get('type') != 'output':
+                    if entry.get('type')!= 'output':
                         add_terminal_entry(context, 'output', entry.get('content', ''), f"success_message_{i}")
     except Exception as e:
         logger.error(f"Error ensuring final output is captured: {str(e)}")
@@ -736,13 +790,13 @@ def post_process_terminal_entries(context):
     try:
         # Get all terminal entries and their order
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order', [])
+        entry_order = context.user_data.get('entry_order',)
         
         if not terminal_entries or not entry_order:
             return
         
         # Create a new list to store the filtered entry order
-        filtered_order = []
+        filtered_order =
         
         # Track content we've seen to detect duplicates
         seen_content = {}  # Map content to entry key
@@ -802,17 +856,18 @@ def process_output_chunk(context, buffer, update):
     """Process the output buffer, preserving tabs and whitespace with improved prompt detection."""
     execution_log = context.user_data['execution_log']
     output = context.user_data['output']
-    patterns = context.user_data.get('input_patterns', [])
+    # input_patterns is Python-specific, but detect_prompt is now more generic
+    patterns = context.user_data.get('input_patterns',) 
     stats = context.user_data.get('activity_stats', {})
     
     # First check if the entire buffer might be a prompt without a newline
     if buffer and not buffer.endswith('\n'):
-        is_prompt, prompt_text = detect_prompt(buffer, patterns)
+        is_prompt, prompt_text = detect_prompt(buffer) # Removed patterns argument
         if is_prompt:
             context.user_data['last_prompt'] = prompt_text
             
             # Add to all_prompts list for final capture
-            all_prompts = context.user_data.get('all_prompts', [])
+            all_prompts = context.user_data.get('all_prompts',)
             if prompt_text not in all_prompts:
                 all_prompts.append(prompt_text)
                 context.user_data['all_prompts'] = all_prompts
@@ -855,7 +910,7 @@ def process_output_chunk(context, buffer, update):
             output.append(line_stripped)
             
             # Enhanced prompt detection
-            is_prompt, prompt_text = detect_prompt(line_stripped, patterns)
+            is_prompt, prompt_text = detect_prompt(line_stripped) # Removed patterns argument
             
             # Check for success messages that might be final output
             is_success_message = detect_success_message(line_stripped)
@@ -865,7 +920,7 @@ def process_output_chunk(context, buffer, update):
                 context.user_data['waiting_for_input'] = True
                 
                 # Add to all_prompts list for final capture
-                all_prompts = context.user_data.get('all_prompts', [])
+                all_prompts = context.user_data.get('all_prompts',)
                 if prompt_text not in all_prompts:
                     all_prompts.append(prompt_text)
                     context.user_data['all_prompts'] = all_prompts
@@ -909,26 +964,9 @@ def detect_success_message(line):
     
     return any(pattern in line.lower() for pattern in success_patterns)
 
-def detect_prompt(line, patterns):
+def detect_prompt(line): # Removed patterns argument as it's Python-specific
     """Enhanced detection for prompts. Returns (is_prompt, prompt_text)"""
     line_text = line.strip()
-    
-    # First check if the line matches or closely matches any extracted patterns
-    for pattern in patterns:
-        # Direct match
-        if pattern in line_text:
-            return True, line_text
-        
-        # Fuzzy match - check if most of the pattern appears in the line
-        # This helps with format specifiers that have been replaced with actual values
-        pattern_words = set(re.findall(r'\w+', pattern))
-        line_words = set(re.findall(r'\w+', line_text))
-        common_words = pattern_words.intersection(line_words)
-        
-        # If we have a significant match and the pattern ends with a prompt character
-        if (len(common_words) >= len(pattern_words) * 0.6 or 
-            (len(common_words) > 0 and pattern.rstrip().endswith((':', '?', '>', ' ')))) and len(pattern_words) > 0:
-            return True, line_text
     
     # Input keywords check
     input_keywords = ['enter', 'input', 'type', 'provide', 'give', 'value', 'values']
@@ -938,7 +976,7 @@ def detect_prompt(line, patterns):
         if keyword in line_lower:
             return True, line_text
     
-    # Check for ending with prompt characters - added space as a prompt character
+    # Check for ending with common prompt characters - added space as a prompt character
     if line_text.rstrip().endswith((':', '?', '>', ' ')):
         return True, line_text
     
@@ -951,7 +989,8 @@ def detect_prompt(line, patterns):
         return True, line_text
     
     # Additional check for very short outputs that might be prompts
-    if len(line_text) < 10 and not line_text.isdigit():
+    # This is a heuristic and might have false positives
+    if len(line_text) < 10 and not line_text.isdigit() and not line_text.isalpha():
         return True, line_text
     
     # If none of the above, this is probably not a prompt
@@ -1081,8 +1120,11 @@ async def handle_title_input(update: Update, context: CallbackContext) -> int:
     # Mark that we've received the title input
     context.user_data['title_received'] = True
     
+    language = context.user_data.get('language', 'Program')
+    default_title = f"{language} Program Execution Report"
+
     if title.lower() == 'skip':
-        context.user_data['program_title'] = "Python Program Execution Report"
+        context.user_data['program_title'] = default_title
     else:
         context.user_data['program_title'] = title
     
@@ -1106,11 +1148,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
     try:
         # Use original code for display (not the modified code with delay)
         code = context.user_data['code']
-        program_title = context.user_data.get('program_title', "Python Program Execution Report")
+        program_title = context.user_data.get('program_title', "Code Execution Report")
 
         # Get terminal entries in order
         terminal_entries = context.user_data.get('terminal_entries', {})
-        entry_order = context.user_data.get('entry_order', [])
+        entry_order = context.user_data.get('entry_order',)
         
         # HARDCODED FIX: Final manual check for "Please enter a valid number" duplicates
         # This is a last resort to ensure no duplicates make it to the PDF
@@ -1139,14 +1181,14 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     padding: 0;
                     background-color: #FFFFFF;
                 }}
-                .program-title {{
+               .program-title {{
                     font-size: 24px;
                     font-weight: bold;
                     text-align: center;
                     margin-bottom: 20px;
                     font-family: Arial, sans-serif;
                 }}
-                .code-section {{
+               .code-section {{
                     margin-bottom: 20px;
                     border: 1px solid #ddd;
                     padding: 10px;
@@ -1157,7 +1199,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     line-height: 1.3;
                     overflow-x: auto;
                 }}
-                .terminal {{
+               .terminal {{
                     background-color: #FFFFFF;
                     color: #000000;
                     padding: 10px;
@@ -1167,20 +1209,20 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                     white-space: pre-wrap;
                     border: 1px solid #ddd;
                 }}
-                .prompt {{
+               .prompt {{
                     color: #0000FF;
                 }}
-                .input {{
+               .input {{
                     color: #008800;
                     font-weight: bold;
                 }}
-                .output {{
+               .output {{
                     color: #000000;
                 }}
-                .error {{
+               .error {{
                     color: #FF0000;
                 }}
-                .system {{
+               .system {{
                     color: #888888;
                     font-style: italic;
                 }}
@@ -1208,15 +1250,15 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
         sanitized_title = re.sub(r'\s+', "_", sanitized_title)  # Replace spaces with underscores
         pdf_filename = f"{sanitized_title}.pdf"
         
-        # Check if wkhtmltopdf is installed
+        # Check if wkhtmltopdf is installed (redundant if Dockerfile/Nixpacks handle it, but kept as fallback)
         try:
             wkhtmltopdf_check = subprocess.run(["which", "wkhtmltopdf"], capture_output=True, text=True)
-            if wkhtmltopdf_check.returncode != 0:
+            if wkhtmltopdf_check.returncode!= 0:
                 # Install wkhtmltopdf if not found
                 logger.info("wkhtmltopdf not found, installing...")
                 install_result = subprocess.run(["apt-get", "update", "-y"], capture_output=True, text=True)
                 install_result = subprocess.run(["apt-get", "install", "-y", "wkhtmltopdf"], capture_output=True, text=True)
-                if install_result.returncode != 0:
+                if install_result.returncode!= 0:
                     logger.error(f"Failed to install wkhtmltopdf: {install_result.stderr}")
                     raise Exception("Failed to install PDF generation tool")
         except Exception as e:
@@ -1234,7 +1276,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext):
                 pdf_filename
             ], capture_output=True, text=True)
             
-            if pdf_result.returncode != 0:
+            if pdf_result.returncode!= 0:
                 logger.error(f"PDF generation error: {pdf_result.stderr}")
                 raise Exception(f"Failed to generate PDF: {pdf_result.stderr}")
             
@@ -1333,7 +1375,11 @@ async def cleanup(context: CallbackContext):
             logger.error("Timeout waiting for process to terminate during cleanup")
     
     # Clean up temporary files
-    for file in ["temp.py", "direct_execution.py", "simple_execution.py", "output.html"]:
+    files_to_remove = [
+        "temp.py", "direct_execution.py", "simple_execution.py", "output.html",
+        "temp.c", "a.out" # Added C-specific files
+    ]
+    for file in files_to_remove:
         if os.path.exists(file):
             try:
                 os.remove(file)
@@ -1342,7 +1388,7 @@ async def cleanup(context: CallbackContext):
     
     # Remove PDF files except the bot files
     for file in os.listdir():
-        if file.endswith(".pdf") and file != "bot.py" and file != "pdf_fixed_bot.py" and file != "html_fixed_bot.py" and file != "final_bot.py" and file != "terminal_bot.py" and file != "prompt_fixed_bot.py" and file != "final_output_bot.py" and file != "fixed_duplicate_bot.py" and file != "final_working_bot.py" and file != "final_solution.py" and file != "hardcoded_solution.py":
+        if file.endswith(".pdf") and file not in ["bot.py", "pdf_fixed_bot.py", "html_fixed_bot.py", "final_bot.py", "terminal_bot.py", "prompt_fixed_bot.py", "final_output_bot.py", "fixed_duplicate_bot.py", "final_working_bot.py", "final_solution.py", "hardcoded_solution.py"]:
             try:
                 os.remove(file)
             except Exception as e:
@@ -1372,10 +1418,10 @@ def main() -> None:
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
-                LANGUAGE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_choice)],
-                CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code)],
-                RUNNING: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_running)],
-                TITLE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title_input)],
+                LANGUAGE_CHOICE:,
+                CODE:,
+                RUNNING:,
+                TITLE_INPUT:,
             },
             fallbacks=[CommandHandler('cancel', cancel)],
         )
