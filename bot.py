@@ -223,11 +223,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         </head>
         <body>
             <h1>{html.escape(title)}</h1>
-
-            <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
-
-            <h2>Terminal View</h2>
+            <h2>OUTPUT</h2>
             <pre class="terminal">"""
 
         # Create a clean terminal view that focuses on program prompts and user inputs
@@ -253,13 +250,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         # Add only the system messages for compilation success and program completion
         if filtered_execution_log:
             html_content += """
-            <h2>System Messages</h2>
-            """
-
-            for entry in filtered_execution_log:
-                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
-                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
-
 
         html_content += """
         </body>
