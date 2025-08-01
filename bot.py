@@ -174,22 +174,10 @@ async def receive_title(update: Update, context: CallbackContext) -> int:
 async def generate_and_send_pdf(update: Update, context: CallbackContext, title: str = "Execution Log"):
     try:
         code = context.user_data['code']
-        execution_log = context.user_data['execution_log']
         terminal_log = context.user_data['terminal_log']
 
-        # Sort execution log by timestamp to ensure correct order
-        execution_log.sort(key=lambda x: x['timestamp'])
+        # Sort terminal log by timestamp to ensure correct order
         terminal_log.sort(key=lambda x: x['timestamp'])
-
-        # Filter execution log to keep only compilation success and program completion messages
-        filtered_execution_log = [
-            entry for entry in execution_log
-            if entry['type'] == 'system' and (
-                entry['message'] == 'Code compiled successfully!' or
-                entry['message'] == 'Code compiled successfully after aggressive whitespace cleaning!' or
-                entry['message'] == 'Program execution completed.'
-            )
-        ]
 
         # Create a more detailed HTML with syntax highlighting and better formatting
         html_content = f"""
@@ -197,7 +185,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         <html>
         <head>
             <meta charset="UTF-8">
-                        <title>{title} - C Program Execution Report</title>
+            <title>{title} - C Program Execution Report</title>
             <style>
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
@@ -223,17 +211,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         </head>
         <body>
             <h1>{html.escape(title)}</h1>
-
-            <h2>Source Code</h2>
             <pre><code>{html.escape(code)}</code></pre>
-
-            <h2>Terminal View</h2>
+            <h2>OUTPUT</h2>
             <pre class="terminal">"""
 
         # Create a clean terminal view that focuses on program prompts and user inputs
         terminal_content = ""
         for entry in terminal_log:
-            entry_type = entry['type']
             content = entry['content']
 
             # Process the content line by line to add indentation to each line
@@ -248,20 +232,6 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         html_content += terminal_content
 
         html_content += """</pre>
-        """
-
-        # Add only the system messages for compilation success and program completion
-        if filtered_execution_log:
-            html_content += """
-            <h2>System Messages</h2>
-            """
-
-            for entry in filtered_execution_log:
-                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
-                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
-
-
-        html_content += """
         </body>
         </html>
         """
