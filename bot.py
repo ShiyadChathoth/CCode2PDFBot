@@ -233,43 +233,78 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         # Create a clean terminal view that focuses on program prompts and user inputs
         terminal_content = ""
         for entry in terminal_log:
-            entry_type = entry['type']
-            content = entry['content']
+async def generate_and_send_pdf(update: Update, context: CallbackContext, title: str = "Execution Log"):
+    try:
+        code = context.user_data['code']
+        # execution_log = context.user_data['execution_log']  <- REMOVED
+        terminal_log = context.user_data.get('terminal_log', [])
 
-            # Process the content line by line to add indentation to each line
-            lines = content.splitlines(True)  # Keep line endings
+        # The entire block for filtering the execution log is now gone.
+        # execution_log.sort(key=lambda x: x['timestamp'])     <- REMOVED
+        # filtered_execution_log = [                          <- REMOVED
+        #     entry for entry in execution_log                <- REMOVED
+        #     if entry['type'] == 'system' and (               <- REMOVED
+        #         ...                                         <- REMOVED
+        #     )                                               <- REMOVED
+        # ]                                                   <- REMOVED
+
+
+        # Process the terminal log into an HTML string first
+        terminal_html_content = ""
+        for entry in terminal_log:
+            content = entry.get('content', '')
+            lines = content.splitlines(True)
             for line in lines:
-                if line.strip():  # Only process non-empty lines
-                    # Add a consistent indentation to each line
-                    terminal_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
+                if line.strip():
+                    terminal_html_content += f'<span class="terminal-line">  {html.escape(line)}</span>'
                 else:
-                    terminal_content += html.escape(line)
+                    terminal_html_content += html.escape(line)
 
-        html_content += terminal_content
-
-        html_content += """</pre>
-        """
-
-        # Add only the system messages for compilation success and program completion
-        if filtered_execution_log:
-            html_content += """
-            <h2>System Messages</h2>
-            """
-
-            for entry in filtered_execution_log:
-                timestamp = entry['timestamp'].strftime('%H:%M:%S.%f')[:-3]  # Include milliseconds
-                html_content += f'<div class="system"><span class="timestamp">[{timestamp}]</span> <strong>System:</strong> <pre>{html.escape(entry["message"])}</pre></div>\n'
-
-
-        html_content += """
+        # Build the entire HTML content using only the code and terminal I/O
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>{html.escape(title)} - C Program Execution Report</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                h1 {{ color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+                h2 {{ color: #3498db; margin-top: 20px; }}
+                pre {{ background-color: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; }}
+                code {{ font-family: Consolas, Monaco, 'Andale Mono', monospace; }}
+                .terminal {{
+                    background-color: #2b2b2b;
+                    color: #f8f8f2;
+                    padding: 20px;
+                    border-radius: 5px;
+                    font-family: monospace;
+                    white-space: pre-wrap;
+                    word-break: break-all;
+                    line-height: 1.5;
+                    margin: 0;
+                    padding-left: 0;
+                }}
+                .terminal-line {{
+                    display: block;
+                    margin: 0;
+                    padding-left: 10px;
+                }}
+            </style>
+        </head>
+        <body>
+            <h1>{html.escape(title)}</h1>
+            <pre><code>{html.escape(code)}</code></pre>
+            <h2>TERMINAL I/O</h2>
+            <pre class="terminal">{terminal_html_content}</pre>
         </body>
         </html>
         """
 
-        with open("output.html", "w") as file:
+        with open("output.html", "w", encoding="utf-8") as file:
             file.write(html_content)
 
-        # Generate PDF with wkhtmltopdf
+        # The rest of the function remains the same...
         pdf_process = subprocess.run(
             ["wkhtmltopdf", "--enable-local-file-access", "output.html", "output.pdf"],
             capture_output=True,
@@ -286,20 +321,13 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
                     filename="program_execution.html"
                 )
         else:
-            # Send both PDF and HTML for maximum compatibility
             await update.message.reply_text("Generating execution report...")
+            pdf_filename = f"{title.replace(' ', '_').lower()}.pdf"
             with open('output.pdf', 'rb') as pdf_file:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=pdf_file,
-                    filename=f"{title.replace(' ', '_').lower()}.pdf"
-                )
-
-            with open('output.html', 'rb') as html_file:
-                await context.bot.send_document(
-                    chat_id=update.effective_chat.id,
-                    document=html_file,
-                    filename=f"{title.replace(' ', '_').lower()}.html"
+                    filename=pdf_filename
                 )
 
     except Exception as e:
@@ -307,6 +335,7 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
         await update.message.reply_text(f"Failed to generate report: {str(e)}")
     finally:
         await cleanup(context)
+
 
 async def cleanup(context: CallbackContext):
     """Cleans up temporary files and clears user data."""
