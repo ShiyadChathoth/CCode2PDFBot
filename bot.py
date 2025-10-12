@@ -189,10 +189,11 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
             <meta charset="UTF-8">
             <title>{html.escape(title)} - C Program Execution Report</title>
             <style>
+                @page {{ margin: 0; }} /* This is the key fix for PDF margins */
                 body {{ 
                     font-family: 'Courier New', Courier, monospace; 
-                    margin: 0; /* Removed margin */
-                    padding: 5px; /* Added small padding for readability */
+                    margin: 0; 
+                    padding: 5px;
                     background-color: #ffffff;
                     color: #000000;
                 }}
@@ -204,8 +205,8 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
                 pre, .terminal {{ 
                     background-color: #ffffff; 
                     color: #000000;
-                    padding: 0; /* Removed padding */
-                    border: none; /* Removed border */
+                    padding: 0; 
+                    border: none; 
                     overflow-x: auto; 
                     white-space: pre-wrap; 
                     word-wrap: break-word; 
@@ -228,16 +229,31 @@ async def generate_and_send_pdf(update: Update, context: CallbackContext, title:
 
         await update.message.reply_text("Generating execution report...")
         pdf_filename = f"{title.replace(' ', '_').lower()}.pdf"
+        docx_filename = f"{title.replace(' ', '_').lower()}.docx"
+        html_filename = f"{title.replace(' ', '_').lower()}.html"
 
+        # Generate PDF
         try:
             HTML('output.html').write_pdf('output.pdf')
             with open('output.pdf', 'rb') as pdf_file:
                 await context.bot.send_document(chat_id=update.effective_chat.id, document=pdf_file, filename=pdf_filename)
         except Exception as pdf_error:
             logger.error(f"WeasyPrint PDF generation failed: {pdf_error}")
-            await update.message.reply_text("Failed to generate PDF. Sending HTML instead.")
-            with open('output.html', 'rb') as html_file:
-                await context.bot.send_document(chat_id=update.effective_chat.id, document=html_file, filename="program_execution.html")
+            await update.message.reply_text("Failed to generate PDF.")
+
+        # Generate DOCX with no margins
+        try:
+            subprocess.run([
+                "pandoc", "output.html",
+                "-V", "geometry:margin=0in",
+                "-o", "output.docx"
+            ], check=True, timeout=30)
+            with open('output.docx', 'rb') as docx_file:
+                await context.bot.send_document(chat_id=update.effective_chat.id, document=docx_file, filename=docx_filename)
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.warning(f"DOCX generation failed: {e}. Pandoc might not be installed.")
+            await update.message.reply_text("Failed to generate DOCX file.")
+
 
     except Exception as e:
         logger.error(f"Error in report generation: {str(e)}")
@@ -256,7 +272,7 @@ async def cleanup(context: CallbackContext):
             if process.returncode is None:
                 process.kill()
 
-    for file in ["temp.c", "temp", "output.pdf", "output.html"]:
+    for file in ["temp.c", "temp", "output.pdf", "output.html", "output.docx"]:
         if os.path.exists(file):
             os.remove(file)
     context.user_data.clear()
