@@ -1,5 +1,6 @@
 python-telegram-bot==22.3
 asyncio
-pdfkit
+weasyprint
 aiohttp
 psutil==5.9.5
+python-dotenv
